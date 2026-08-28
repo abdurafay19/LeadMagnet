@@ -74,8 +74,6 @@ Each client's spreadsheet (a copy of the master template) has these tabs:
 
 ## Screenshots
 
-Add each workflow's canvas as `screenshots/wf-XX.png` and it'll render below.
-
 **WF-01 — Intake and Scoring**
 Validates the submission, resolves or creates the client's Drive folder/spreadsheet, and scores the lead.
 ![WF-01 canvas](screenshots/wf-01.png)
