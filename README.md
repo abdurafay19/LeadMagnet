@@ -74,8 +74,39 @@ Each client's spreadsheet (a copy of the master template) has these tabs:
 
 ## Screenshots
 
-<!-- Add screenshots of the n8n canvas for each workflow here, e.g.: -->
-<!-- ![WF-01 canvas](screenshots/wf-01.png) -->
+Add each workflow's canvas as `screenshots/wf-XX.png` and it'll render below.
+
+**WF-01 — Intake and Scoring**
+Validates the submission, resolves or creates the client's Drive folder/spreadsheet, and scores the lead.
+![WF-01 canvas](screenshots/wf-01.png)
+
+**WF-02 — Result Email Delivery**
+Sends the graded result email via a raw Gmail API call carrying the client-identifying headers.
+![WF-02 canvas](screenshots/wf-02.png)
+
+**WF-03 — A-Level Lead Alert and Task**
+Alerts the owner and creates a research/contact task for A-grade leads.
+![WF-03 canvas](screenshots/wf-03.png)
+
+**WF-04 — Follow-Up Scheduler**
+Loops every client folder and sends the next due follow-up step to leads that need one.
+![WF-04 canvas](screenshots/wf-04.png)
+
+**WF-05 — Booking Sync**
+Resolves the client from a Cal.com booking and syncs its created/cancelled/rescheduled status to the lead.
+![WF-05 canvas](screenshots/wf-05.png)
+
+**WF-06 — Reply Detection and Classification**
+Classifies inbound replies and resolves the client by reading headers off the original email thread.
+![WF-06 canvas](screenshots/wf-06.png)
+
+**WF-07 — Daily Management Summary**
+Loops every client folder and emails that client's owner a daily performance summary.
+![WF-07 canvas](screenshots/wf-07.png)
+
+**WF-99 — Error Handler**
+Catches and classifies failures from every other workflow into a central error log.
+![WF-99 canvas](screenshots/wf-99.png)
 
 ## Status
 
