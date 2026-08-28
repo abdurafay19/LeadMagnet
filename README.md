@@ -74,8 +74,14 @@ Each client's spreadsheet (a copy of the master template) has these tabs:
 
 ## Screenshots
 
-<!-- Add screenshots of the n8n canvas for each workflow here, e.g.: -->
-<!-- ![WF-01 canvas](screenshots/wf-01.png) -->
+![WF-01 canvas](screenshots/wf-01.png)
+![WF-02 canvas](screenshots/wf-02.png)
+![WF-03 canvas](screenshots/wf-03.png)
+![WF-04 canvas](screenshots/wf-04.png)
+![WF-05 canvas](screenshots/wf-05.png)
+![WF-06 canvas](screenshots/wf-06.png)
+![WF-07 canvas](screenshots/wf-07.png)
+![WF-99 canvas](screenshots/wf-99.png)
 
 ## Status
 
