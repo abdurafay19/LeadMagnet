@@ -1,0 +1,428 @@
+{
+  "name": "WF-99 - Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "4442842a-7631-4351-964d-08a33e6afabb",
+      "name": "TRG - Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Spec 13: 'Do not store credentials inside Code nodes or plain-text sheets.' The Errors tab\n// IS a plain-text sheet, and n8n error payloads from HTTP/OAuth node failures can include\n// Authorization headers, tokens or API keys in the message/stack. Redact before it ever\n// reaches error_summary, which is the one place in this whole system that captures raw\n// failure content from every other workflow.\nfunction redactSensitive(str) {\n  return String(str || '')\n    .replace(/Bearer\\s+[A-Za-z0-9\\-_.]+/gi, 'Bearer [REDACTED]')\n    .replace(/\"(access_token|refresh_token|api_key|apikey|password|secret|client_secret)\"\\s*:\\s*\"[^\"]*\"/gi, '\"$1\":\"[REDACTED]\"')\n    .replace(/(access_token|refresh_token|api_key|apikey|password|secret|client_secret)=[^&\\s\"']+/gi, '$1=[REDACTED]');\n}\n\nconst workflowName = input.workflow?.name || 'Unknown workflow';\nconst workflowId = input.workflow?.id || '';\nconst executionId = input.execution?.id || '';\nconst executionUrl = input.execution?.url || '';\nconst lastNode = input.execution?.lastNodeExecuted || input.node?.name || 'Unknown node';\nconst rawErrorMessage = input.execution?.error?.message\n  || input.execution?.error?.description\n  || JSON.stringify(input.execution?.error || {}).slice(0, 500);\nconst errorMessage = redactSensitive(rawErrorMessage);\n\n// Best-effort extraction of a lead_id or email from the error payload, without exposing\n// unnecessary sensitive content in the log.\nconst rawString = redactSensitive(JSON.stringify(input).slice(0, 3000));\nconst leadIdMatch = rawString.match(/\"lead_id\"\\s*:\\s*\"([^\"]+)\"/);\nconst emailMatch = rawString.match(/[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)*\\.[a-zA-Z]{2,}/);\n\nconst leadId = leadIdMatch ? leadIdMatch[1] : '';\nconst relatedEmail = emailMatch ? emailMatch[0] : '';\n\nreturn [{ json: {\n  workflow_name: workflowName,\n  workflow_id: workflowId,\n  execution_id: executionId,\n  execution_url: executionUrl,\n  failed_node: lastNode,\n  error_summary: errorMessage,\n  lead_id: leadId,\n  related_email: relatedEmail,\n  occurred_at_utc: new Date().toISOString()\n} }];"
+      },
+      "id": "7c391d2b-744c-490b-aef0-8b89735298a2",
+      "name": "CODE - Extract Error Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M",
+          "cachedResultName": "LeadMagnet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Errors",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "workflow_name",
+              "lookupValue": "={{$json.workflow_name}}"
+            }
+          ]
+        },
+        "options": {
+          "returnAllMatches": true
+        }
+      },
+      "id": "gs-check-recent-errors",
+      "name": "GS - Check Recent Errors",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "alwaysOutputData": true,
+      "notes": "Feeds the widespread-failure escalation in CODE - Classify Severity. alwaysOutputData so a workflow's first-ever failure (0 prior rows) still emits one empty item instead of breaking the chain.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('CODE - Extract Error Details').first().json;\nconst priorErrors = $input.all();\nconst wf = item.workflow_name.toLowerCase();\nconst node = item.failed_node.toLowerCase();\n\nlet severity = 'Medium';\n\n// Section 13.3: Critical = intake/scoring/widespread result-email failure.\nconst criticalSignals = ['wf-01', 'lead intake', 'calculate scores', 'build lead record', 'upsert lead', 'normalize input'];\n// High = A-level alerts failing, or booking/reply stop conditions failing.\nconst highSignals = ['wf-03', 'a-level', 'wf-05', 'booking', 'wf-06', 'reply', 'unsubscribe', 'wf-02', 'result email'];\n// Note: spec 13.3's Medium example is 'Dashboard delay' (WF-07) - there is deliberately no\n// signal list that routes WF-07 to Low. Its own example, 'non-blocking copy or cosmetic\n// issue', doesn't correspond to anything that throws an exception in the first place, so Low\n// is left as a manual severity a human can set after reviewing the Errors tab, not something\n// this classifier assigns automatically.\n\nif (criticalSignals.some((s) => wf.includes(s) || node.includes(s))) {\n  severity = 'Critical';\n} else if (highSignals.some((s) => wf.includes(s) || node.includes(s))) {\n  severity = 'High';\n}\n\n// Spec 13.3 explicitly distinguishes a single result-email failure (High) from a 'widespread\n// result-email failure' (Critical). Generalized to any workflow: 3+ failures from the same\n// workflow within the last hour indicates a systemic problem, not an isolated one-off.\nconst WIDESPREAD_THRESHOLD = 3;\nconst oneHourAgoMs = Date.now() - 60 * 60 * 1000;\nconst recentSameWorkflowFailures = priorErrors.filter((row) => {\n  const t = new Date(row.json.event_at_utc || 0).getTime();\n  return !isNaN(t) && t >= oneHourAgoMs;\n}).length;\n\nif (severity !== 'Critical' && recentSameWorkflowFailures >= WIDESPREAD_THRESHOLD) {\n  severity = 'Critical';\n}\n\nconst needsImmediateNotification = severity === 'Critical' || severity === 'High';\n\nreturn [{ json: { ...item, severity, recent_same_workflow_failures: recentSameWorkflowFailures, needs_immediate_notification: needsImmediateNotification } }];"
+      },
+      "id": "466fef50-88b7-4c85-9d41-8ac00b8db86c",
+      "name": "CODE - Classify Severity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M",
+          "cachedResultName": "LeadMagnet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_name": "={{$json.workflow_name}}",
+            "execution_id": "={{$json.execution_id}}",
+            "node": "={{$json.failed_node}}",
+            "error_summary": "={{$json.error_summary}}",
+            "severity": "={{$json.severity}}",
+            "lead_id": "={{$json.lead_id}}",
+            "related_email": "={{$json.related_email}}",
+            "event_at_utc": "={{$json.occurred_at_utc}}",
+            "retry_status": "logged",
+            "resolved": false
+          },
+          "schema": [
+            {
+              "id": "workflow_name",
+              "displayName": "workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "node",
+              "displayName": "node",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_summary",
+              "displayName": "error_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "related_email",
+              "displayName": "related_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "retry_status",
+              "displayName": "retry_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resolved",
+              "displayName": "resolved",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0109d695-bfa6-4da1-978a-a7bc87330d58",
+      "name": "GS - Append Error Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.needs_immediate_notification}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3a2732ba-903c-493c-b804-8af4e84fc942",
+      "name": "IF - Needs Immediate Notification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M",
+          "cachedResultName": "LeadMagnet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "acd5b910-c979-4011-a528-cc072d61e6a3",
+      "name": "GS - Load Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1104,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const errorItem = $('CODE - Classify Severity').first().json;\nconst configRows = $input.all();\n\nconst config = {};\nfor (const row of configRows) {\n  const key = row.json.Key ?? row.json.key;\n  const value = row.json.Value ?? row.json.value;\n  if (key) config[key] = value;\n}\n\nreturn [{ json: { ...errorItem, owner_email: config.OWNER_EMAIL || '' } }];"
+      },
+      "id": "e6b68ffc-c28e-4845-81d8-98d184381ccb",
+      "name": "CODE - Merge Config for Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.owner_email}}",
+        "subject": "={{ '[' + $json.severity + '] Error in ' + $json.workflow_name }}",
+        "emailType": "text",
+        "message": "={{ '[' + $json.severity + '] automation error\\n\\nWorkflow: ' + $json.workflow_name + '\\nFailed node: ' + $json.failed_node + '\\nExecution ID: ' + $json.execution_id + '\\nExecution link: ' + $json.execution_url + '\\nRelated lead_id: ' + ($json.lead_id || 'n/a') + '\\nTime (UTC): ' + $json.occurred_at_utc + '\\n\\nError summary:\\n' + $json.error_summary + '\\n\\nThis has been logged to the Errors tab as unresolved. Review, fix, and rerun before marking it resolved - do not mark resolved until a rerun has been verified successful.' }}",
+        "options": {}
+      },
+      "id": "73484413-2a42-4b24-9fcd-9bc66f8180f0",
+      "name": "MAIL - Notify Automation Owner",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1552,
+        0
+      ],
+      "webhookId": "f0753329-8563-4a57-83dd-6b4e2a8cf88e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "TRG - Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "CODE - Extract Error Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Extract Error Details": {
+      "main": [
+        [
+          {
+            "node": "GS - Check Recent Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Check Recent Errors": {
+      "main": [
+        [
+          {
+            "node": "CODE - Classify Severity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Classify Severity": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Error Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Error Log": {
+      "main": [
+        [
+          {
+            "node": "IF - Needs Immediate Notification?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Needs Immediate Notification?": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Config": {
+      "main": [
+        [
+          {
+            "node": "CODE - Merge Config for Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Merge Config for Alert": {
+      "main": [
+        [
+          {
+            "node": "MAIL - Notify Automation Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "66ef574a-14f1-494d-ab5f-d7cffc38d65b",
+  "meta": {
+    "instanceId": "8310575579d7e2e5ff28d39122f909dfdf48741925705803ee1764ab78633012"
+  },
+  "nodeGroups": [],
+  "id": "aXcquFmCKJXmDtKE",
+  "tags": []
+}

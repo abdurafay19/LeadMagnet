@@ -1,0 +1,776 @@
+{
+  "name": "WF-07 - Daily Management Summary",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * *"
+            }
+          ]
+        }
+      },
+      "id": "03f2048f-1434-4975-a6e7-54f2236e6aca",
+      "name": "TRG - Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6",
+            "mode": "list",
+            "cachedResultName": "Lead Magnet",
+            "cachedResultUrl": "https://drive.google.com/drive/folders/1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6"
+          },
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        220,
+        300
+      ],
+      "id": "b3f1a6c2-2a4e-4b7a-9c3f-1a2b3c4d5e6f",
+      "name": "GD - Search Folders",
+      "notes": "Every client folder under the root Lead Magnet Drive folder - one iteration of the loop below per client.",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        440,
+        300
+      ],
+      "id": "d4e5f6a7-3b5c-4d8e-af61-2b3c4d5e6f70",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $json.name }}",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.id }}",
+            "mode": "id"
+          },
+          "whatToSearch": "files"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        660,
+        300
+      ],
+      "id": "e5f6a7b8-4c6d-4e9f-b072-3c4d5e6f7081",
+      "name": "GD - Search File",
+      "alwaysOutputData": true,
+      "notes": "Finds this client's copied spreadsheet inside its folder (named the same as the folder). Its resolved id is referenced by name (not $json) from every Sheets node below, since some of those are dead-end branches that don't sit directly downstream of this node.",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b8c9d0e1-f2a3-4405-8567-9d0e1f2a3b4c",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        660,
+        460
+      ],
+      "id": "c9d0e1f2-a3b4-4516-9678-0e1f2a3b4c5d",
+      "name": "IF - Client Sheet Found?",
+      "notes": "Guards against a client folder that has no matching spreadsheet inside it yet - skips straight back to the outer loop instead of every Sheets node below erroring on an empty documentId."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "e58f669f-cbd8-4dc3-8ce5-21d94dbe63ed",
+      "name": "GS - Read All Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        -160
+      ],
+      "notes": "Deliberately a dead-end branch off GD - Search File (not the trigger), referenced by name from CODE - Compute Daily Summary. Previously chained sequentially (Leads -> Activity_Log -> Errors -> Config): if any one returned 0 rows (e.g. a brand-new client with no leads yet), every downstream node - including the whole report - would silently never run. Config is now the only node feeding the code node directly, since it is guaranteed non-empty. Re-runs fresh once per client folder via the outer Loop Over Items loop.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "08a1efd1-1d10-4b41-9c55-115182c285cd",
+      "name": "GS - Read Activity Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        -160
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Errors",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "316e19e9-9b97-4fa4-834f-698efb0176e0",
+      "name": "GS - Read Errors",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        -160
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "dca244bd-e062-4b43-a899-14e7b131fadc",
+      "name": "GS - Read Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $('GS - Read All Leads').all().map((i) => i.json);\nconst activity = $('GS - Read Activity Log').all().map((i) => i.json);\nconst errors = $('GS - Read Errors').all().map((i) => i.json);\nconst configRows = $input.all();\n\nconst config = {};\nfor (const row of configRows) {\n  const key = row.json.Key ?? row.json.key;\n  const value = row.json.Value ?? row.json.value;\n  if (key) config[key] = value;\n}\n\nconst tz = config.DEFAULT_TIMEZONE || 'America/New_York';\nconst revenueTarget = Number(config.MONTHLY_REVENUE_TARGET) || 10000;\n\nfunction dateInTZ(isoString, timezone) {\n  if (!isoString) return null;\n  try {\n    return new Date(isoString).toLocaleDateString('en-CA', { timeZone: timezone });\n  } catch (e) {\n    return String(isoString).slice(0, 10);\n  }\n}\n\nconst now = new Date();\nconst todayStr = dateInTZ(now.toISOString(), tz);\nconst monthStr = todayStr.slice(0, 7);\n\nconst todaysLeads = leads.filter((l) => dateInTZ(l.created_at_utc, tz) === todayStr);\nconst newSubmissions = todaysLeads.length;\nconst aLeads = todaysLeads.filter((l) => l.lead_grade === 'A').length;\nconst bLeads = todaysLeads.filter((l) => l.lead_grade === 'B').length;\nconst cLeads = todaysLeads.filter((l) => l.lead_grade === 'C').length;\n\nconst todaysActivity = activity.filter((a) => dateInTZ(a.event_at_utc, tz) === todayStr);\nconst resultEmailsSent = todaysActivity.filter((a) => a.event_type === 'result_email_sent').length;\nconst positiveReplies = todaysActivity.filter((a) => {\n  if (a.event_type !== 'reply_received') return false;\n  try {\n    return JSON.parse(a.details || '{}').reply_type === 'positive';\n  } catch {\n    return false;\n  }\n}).length;\nconst callsBooked = todaysActivity.filter((a) => a.event_type === 'booking_created').length;\n// Nothing in WF-01 through WF-06 currently writes 'proposal_sent' activity - proposals are a\n// manual sales-team step for now (spec 15.4 lists proposal generation as a future workflow).\n// This will start counting automatically once/if that workflow exists.\nconst proposalCountToday = todaysActivity.filter((a) => a.event_type === 'proposal_sent').length;\n\nconst todaysErrors = errors.filter((e) => dateInTZ(e.event_at_utc, tz) === todayStr);\nconst resultEmailsFailed = todaysErrors.filter(\n  (e) => e.workflow_name === 'WF-02 - Result Email Delivery' || String(e.error_summary || '').toLowerCase().includes('email')\n).length;\n\nconst loomsPending = leads.filter((l) => l.status === 'A-level review required');\nconst loomsPendingCount = loomsPending.length;\nconst loomsOverdueCount = loomsPending.filter(\n  (l) => l.next_action_at_utc && new Date(l.next_action_at_utc) < now\n).length;\n\nconst proposalsToday = leads.filter(\n  (l) => l.status === 'Proposal sent' && dateInTZ(l.last_activity_at_utc, tz) === todayStr\n);\nconst proposalValueToday = proposalsToday.reduce((sum, l) => sum + (Number(l.proposal_value) || 0), 0);\n\nconst wonThisMonth = leads.filter(\n  (l) => String(l.deal_status || '').toLowerCase() === 'won'\n    && dateInTZ(l.last_activity_at_utc, tz).slice(0, 7) === monthStr\n);\nconst wonRevenueThisMonth = wonThisMonth.reduce((sum, l) => sum + (Number(l.won_revenue) || 0), 0);\n\nconst terminalStatuses = ['Won', 'Lost', 'Unsubscribed', 'Invalid', 'Nurture'];\nconst overdueLeads = leads.filter((l) => {\n  if (terminalStatuses.includes(l.status)) return false;\n  if (l.suppressed === true || String(l.suppressed).toLowerCase() === 'true') return false;\n  if (!l.next_action_at_utc) return false;\n  const due = new Date(l.next_action_at_utc);\n  return !isNaN(due.getTime()) && due < now;\n});\nconst overdueCount = overdueLeads.length;\n\nconst openErrors = errors.filter((e) => {\n  const resolved = e.resolved === true\n    || String(e.resolved || '').toLowerCase() === 'true'\n    || String(e.retry_status || '').toLowerCase() === 'resolved';\n  return !resolved;\n});\nconst openErrorsCount = openErrors.length;\n\nconst sourceCounts = {};\nfor (const l of todaysLeads) {\n  const src = l.source || 'unknown';\n  sourceCounts[src] = (sourceCounts[src] || 0) + 1;\n}\nlet topSource = 'N/A';\nlet topSourceCount = 0;\nfor (const [src, count] of Object.entries(sourceCounts)) {\n  if (count > topSourceCount) { topSource = src; topSourceCount = count; }\n}\n\nconst weaknessCounts = {};\nfor (const l of todaysLeads) {\n  let weakest = [];\n  try { weakest = JSON.parse(l.weakest_categories || '[]'); } catch (e) { weakest = []; }\n  const top = weakest[0]?.category;\n  if (top) weaknessCounts[top] = (weaknessCounts[top] || 0) + 1;\n}\nlet topWeakness = 'N/A';\nlet topWeaknessCount = 0;\nfor (const [cat, count] of Object.entries(weaknessCounts)) {\n  if (count > topWeaknessCount) { topWeakness = cat; topWeaknessCount = count; }\n}\n\nconst actions = [];\nif (overdueCount > 0) actions.push(`${overdueCount} lead(s) have an overdue next action - review and act today.`);\nif (loomsOverdueCount > 0) actions.push(`${loomsOverdueCount} A-lead Loom review(s) are overdue on SLA.`);\nif (openErrorsCount > 0) actions.push(`${openErrorsCount} error(s) need review in the Errors tab.`);\nif (actions.length === 0) actions.push('No urgent actions - pipeline is current.');\n\nreturn [{ json: {\n  date: todayStr,\n  new_submissions: newSubmissions,\n  a_leads: aLeads,\n  b_leads: bLeads,\n  c_leads: cLeads,\n  result_emails_sent: resultEmailsSent,\n  result_emails_failed: resultEmailsFailed,\n  positive_replies: positiveReplies,\n  calls_booked: callsBooked,\n  looms_pending: loomsPendingCount,\n  looms_overdue: loomsOverdueCount,\n  proposals_sent_today: proposalCountToday,\n  proposal_value_today: proposalValueToday,\n  won_revenue_this_month: wonRevenueThisMonth,\n  revenue_target: revenueTarget,\n  overdue_next_actions: overdueCount,\n  errors_requiring_attention: openErrorsCount,\n  top_source: topSource,\n  most_common_weakness: topWeakness,\n  required_actions: actions.join(' '),\n  owner_email: config.OWNER_EMAIL || ''\n} }];"
+      },
+      "id": "dd5a1635-4f32-4a84-8e87-34468518ac2d",
+      "name": "CODE - Compute Daily Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $input.first().json;\n\n// Matches spec 11.2's daily owner summary format. Section 8.7 also explicitly requires\n// 'Result emails sent/failed' as a reported metric, even though the illustrative 11.2\n// template omits a line for it - CODE - Compute Daily Summary already calculates it, so it\n// is included here rather than silently computed and never shown.\nconst body = [\n  `Date: ${s.date}`,\n  '',\n  `New submissions: ${s.new_submissions}`,\n  `A leads: ${s.a_leads} | B leads: ${s.b_leads} | C leads: ${s.c_leads}`,\n  `Result emails sent: ${s.result_emails_sent} | Failed: ${s.result_emails_failed}`,\n  `Positive replies: ${s.positive_replies}`,\n  `Calls booked: ${s.calls_booked}`,\n  `Loom reviews pending: ${s.looms_pending}`,\n  `Overdue next actions: ${s.overdue_next_actions}`,\n  `Proposals sent today: ${s.proposals_sent_today} | Value: ${s.proposal_value_today}`,\n  `Won revenue this month: ${s.won_revenue_this_month} / USD ${s.revenue_target} target`,\n  `Errors requiring attention: ${s.errors_requiring_attention}`,\n  '',\n  `Top-performing source: ${s.top_source}`,\n  `Most common system weakness: ${s.most_common_weakness}`,\n  `Required management actions: ${s.required_actions}`\n].join('\\n');\n\nreturn [{ json: { ...s, summary_body: body } }];"
+      },
+      "id": "a44ab094-cd23-4b14-8633-349956fe4831",
+      "name": "CODE - Format Summary Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.owner_email}}",
+        "subject": "={{ 'Daily Management Summary - ' + $json.date }}",
+        "emailType": "text",
+        "message": "={{$json.summary_body}}",
+        "options": {}
+      },
+      "id": "474b4874-cbc4-4984-b561-c781192f15be",
+      "name": "MAIL - Send Daily Summary",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1552,
+        0
+      ],
+      "webhookId": "ef4bc585-be2b-4dc2-a0cd-1f98fa5f6d04",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Dashboard",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "date"
+          ],
+          "value": {
+            "date": "={{$json.date}}",
+            "new_submissions": "={{$json.new_submissions}}",
+            "a_leads": "={{$json.a_leads}}",
+            "b_leads": "={{$json.b_leads}}",
+            "c_leads": "={{$json.c_leads}}",
+            "result_emails_sent": "={{$json.result_emails_sent}}",
+            "result_emails_failed": "={{$json.result_emails_failed}}",
+            "positive_replies": "={{$json.positive_replies}}",
+            "calls_booked": "={{$json.calls_booked}}",
+            "looms_pending": "={{$json.looms_pending}}",
+            "looms_overdue": "={{$json.looms_overdue}}",
+            "proposals_sent_today": "={{$json.proposals_sent_today}}",
+            "proposal_value_today": "={{$json.proposal_value_today}}",
+            "won_revenue_this_month": "={{$json.won_revenue_this_month}}",
+            "revenue_target": "={{$json.revenue_target}}",
+            "overdue_next_actions": "={{$json.overdue_next_actions}}",
+            "errors_requiring_attention": "={{$json.errors_requiring_attention}}",
+            "top_source": "={{$json.top_source}}",
+            "most_common_weakness": "={{$json.most_common_weakness}}"
+          },
+          "schema": [
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "new_submissions",
+              "displayName": "new_submissions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "a_leads",
+              "displayName": "a_leads",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "b_leads",
+              "displayName": "b_leads",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "c_leads",
+              "displayName": "c_leads",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "result_emails_sent",
+              "displayName": "result_emails_sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "result_emails_failed",
+              "displayName": "result_emails_failed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "positive_replies",
+              "displayName": "positive_replies",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "calls_booked",
+              "displayName": "calls_booked",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "looms_pending",
+              "displayName": "looms_pending",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "looms_overdue",
+              "displayName": "looms_overdue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "proposals_sent_today",
+              "displayName": "proposals_sent_today",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "proposal_value_today",
+              "displayName": "proposal_value_today",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "won_revenue_this_month",
+              "displayName": "won_revenue_this_month",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "revenue_target",
+              "displayName": "revenue_target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "overdue_next_actions",
+              "displayName": "overdue_next_actions",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "errors_requiring_attention",
+              "displayName": "errors_requiring_attention",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "top_source",
+              "displayName": "top_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "most_common_weakness",
+              "displayName": "most_common_weakness",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "gs-update-dashboard",
+      "name": "GS - Update Dashboard",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1552,
+        160
+      ],
+      "notes": "One row per day, upserted on 'date' so a same-day re-trigger (e.g. manual test run) updates the existing row instead of duplicating it. Reads directly from CODE - Format Summary Text (not after the Gmail node) so it always reflects the exact same numbers as the emailed summary, and isn't affected by Gmail's send-node output truncating the input fields.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "",
+            "event_type": "daily_summary_sent",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ date: $('CODE - Format Summary Text').first().json.date, new_submissions: $('CODE - Format Summary Text').first().json.new_submissions, a_leads: $('CODE - Format Summary Text').first().json.a_leads, b_leads: $('CODE - Format Summary Text').first().json.b_leads, c_leads: $('CODE - Format Summary Text').first().json.c_leads, overdue_next_actions: $('CODE - Format Summary Text').first().json.overdue_next_actions, errors_requiring_attention: $('CODE - Format Summary Text').first().json.errors_requiring_attention })}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "99f2e195-614c-467c-832f-a04097ec0a8f",
+      "name": "GS - Append Activity (Daily Summary Sent)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "TRG - Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "GD - Search Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Search Folders": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "GD - Search File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Search File": {
+      "main": [
+        [
+          {
+            "node": "IF - Client Sheet Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Client Sheet Found?": {
+      "main": [
+        [
+          {
+            "node": "GS - Read All Leads",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GS - Read Activity Log",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GS - Read Errors",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GS - Read Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Read Config": {
+      "main": [
+        [
+          {
+            "node": "CODE - Compute Daily Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Compute Daily Summary": {
+      "main": [
+        [
+          {
+            "node": "CODE - Format Summary Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Format Summary Text": {
+      "main": [
+        [
+          {
+            "node": "MAIL - Send Daily Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GS - Update Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAIL - Send Daily Summary": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity (Daily Summary Sent)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity (Daily Summary Sent)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "REPLACE_WITH_WF99_ID"
+  },
+  "versionId": "ca868457-de2c-48b2-a01c-8f5965ad0142",
+  "meta": {
+    "instanceId": "8310575579d7e2e5ff28d39122f909dfdf48741925705803ee1764ab78633012"
+  },
+  "nodeGroups": [],
+  "id": "EoxxvKQYIUIYKptr",
+  "tags": []
+}

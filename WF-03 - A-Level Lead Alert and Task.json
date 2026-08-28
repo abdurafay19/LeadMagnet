@@ -1,0 +1,1512 @@
+{
+  "name": "WF-03 - A-Level Lead Alert and Task",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "lead_id"
+            },
+            {
+              "name": "sheet_id"
+            }
+          ]
+        }
+      },
+      "id": "e7fa5ac9-65fb-42f6-83ad-3193c3974342",
+      "name": "TRG - Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        752,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "9ec079b9-c665-47d7-9bdc-d4080521aaad",
+      "name": "GS - Load Lead Record",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        976,
+        784
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $json;\n// Spec 13.1 idempotency, same pattern as WF-02: Leads.status is the single source of truth\n// (spec 3.2), not execution history. If status has already moved past 'Result sent', WF-03\n// already alerted the owner and created the research task for this lead - do not repeat it.\nconst ALREADY_ALERTED = new Set([\n  'A-level review required', 'Loom prepared', 'Contacted', 'Replied', 'Call booked',\n  'Call completed', 'Proposal required', 'Proposal sent', 'Negotiation', 'Won', 'Lost',\n  'Nurture', 'Unsubscribed', 'Invalid'\n]);\nlet sendEligibility;\nif (!lead.lead_id) {\n  sendEligibility = 'missing';\n} else if (lead.status && ALREADY_ALERTED.has(lead.status)) {\n  sendEligibility = 'already_sent';\n} else {\n  sendEligibility = 'eligible';\n}\nreturn [{ json: { ...lead, send_eligibility: sendEligibility } }];"
+      },
+      "id": "630922d8-1d1b-41b4-a354-7a49f2f15b11",
+      "name": "CODE - Check Alert Eligibility",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.send_eligibility}}",
+                    "rightValue": "eligible",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "elig-1"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.send_eligibility}}",
+                    "rightValue": "already_sent",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "elig-2"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.send_eligibility}}",
+                    "rightValue": "missing",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "elig-3"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "7bd7828a-006b-47e4-bbd0-c7698f2961b2",
+      "name": "SWT - Check Alert Eligibility",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1392,
+        752
+      ],
+      "notes": "Outputs 0=eligible, 1=already_sent, 2=missing, 3=extra (fallback, routed same as missing)."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "a5904d7b-bca9-4e9a-aa4e-f1e586231e63",
+      "name": "GS - Load Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1584,
+        592
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "a_lead_alert_skipped_duplicate",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ current_status: $json.status })}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "ab504fd0-c8ea-431d-91d3-bee0cd78b626",
+      "name": "GS - Append Activity Log (Skipped Duplicate)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1584,
+        768
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "T15 (workflow retry must be idempotent): reached when Leads.status already shows the owner was alerted for this lead. No second alert/task is created."
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\nreturn [{ json: {\n  lead_id: item.lead_id,\n  alert_sent: false,\n  due_at_utc: item.next_action_at_utc || '',\n  status: item.status\n} }];"
+      },
+      "id": "8b092258-ddcd-4d7e-ace1-7ea23eabdf14",
+      "name": "CODE - Set Workflow Output (Skipped)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id || ''}}",
+            "event_type": "a_lead_alert_lead_not_found",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ lead_id_requested: $json.lead_id })}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "262c3871-ddb8-47b1-a7e2-bc198190bf41",
+      "name": "GS - Append Activity Log (Lead Not Found)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1584,
+        944
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Logged before the failure below so the event survives even though the execution ultimately errors out."
+    },
+    {
+      "parameters": {
+        "jsCode": "throw new Error(`WF-03: No Leads row found for lead_id \"${$json.lead_id}\". Cannot send A-level owner alert - check that WF-01 upserted this lead before calling WF-03.`);"
+      },
+      "id": "61f29692-eafd-443c-8583-f59f0bcb580d",
+      "name": "CODE - Fail Missing Lead Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        944
+      ],
+      "notes": "Deliberately throws so this execution is marked failed and routes to the workflow's Error Workflow (WF-99), per spec 8.8 and the Critical severity row in 13.3."
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('GS - Load Lead Record').first().json;\nconst configRows = $input.all();\n\nconst config = {};\nfor (const row of configRows) {\n  const key = row.json.Key ?? row.json.key;\n  const value = row.json.Value ?? row.json.value;\n  if (key) config[key] = value;\n}\n\nlet weakestCategories = [];\ntry {\n  weakestCategories = JSON.parse(lead.weakest_categories || '[]');\n} catch (e) {\n  weakestCategories = [];\n}\nconst topGaps = weakestCategories.map((w) => w.category).join(', ');\n\nconst slaHours = Number(config.LOOM_SLA_HOURS) || 24;\nconst dueAtUtc = new Date(Date.now() + slaHours * 60 * 60 * 1000).toISOString();\n\nconst sourceLine = lead.campaign ? `${lead.source} / ${lead.campaign}` : lead.source;\nconst sheetId = $('TRG - Execute Workflow Trigger').last().json.sheet_id;\nconst crmLink = config.CRM_LINK_BASE_URL ? `${config.CRM_LINK_BASE_URL}${lead.lead_id}` : `https://docs.google.com/spreadsheets/d/${sheetId}/edit#gid=0 (lead_id: ${lead.lead_id})`;\n\nconst summary = [\n  'NEW A-LEVEL REAL ESTATE LEAD',\n  '',\n  `Name: ${lead.name}`,\n  `Company: ${lead.company_name}`,\n  `Website: ${lead.website}`,\n  `Business type: ${lead.business_type}`,\n  `Team size: ${lead.team_size}`,\n  `Monthly leads: ${lead.monthly_leads}`,\n  `Qualification score: ${lead.qualification_score}/100`,\n  `System health: ${lead.system_health_score}/100`,\n  `Main problem: ${lead.main_problem}`,\n  `Top gaps: ${topGaps}`,\n  `Timeline: ${lead.improvement_timeline}`,\n  `Source: ${sourceLine}`,\n  `Required action: Review website, identify one specific process problem, prepare Loom and contact by ${dueAtUtc}.`,\n  `Lead record: ${crmLink}`\n].join('\\n');\n\nreturn [{ json: {\n  ...lead,\n  config,\n  top_gaps: topGaps,\n  due_at_utc: dueAtUtc,\n  internal_summary: summary\n} }];"
+      },
+      "id": "2f1e03f3-b13a-4c0c-a5d8-f2ed895c3a0c",
+      "name": "CODE - Build Alert Summary and SLA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1776,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.config.OWNER_EMAIL}}",
+        "subject": "={{ 'URGENT - New A-Level Lead: ' + $json.company_name }}",
+        "emailType": "text",
+        "message": "={{$json.internal_summary}}",
+        "options": {}
+      },
+      "id": "b274f821-f791-4a71-a3be-213722dad686",
+      "name": "MAIL - Send Owner Alert",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1984,
+        592
+      ],
+      "webhookId": "1bab01ca-1345-48cc-b1f8-00c0aa1b8bda",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const built = $('CODE - Build Alert Summary and SLA').first().json;\nconst sendResult = $input.first().json;\n\nreturn [{ json: {\n  lead_id: built.lead_id,\n  next_action: 'Review website, identify one specific process problem, prepare Loom and contact by due time',\n  next_action_at_utc: built.due_at_utc,\n  status: 'A-level review required',\n  updated_at_utc: new Date().toISOString(),\n  alert_message_id: sendResult.id || ''\n} }];"
+      },
+      "id": "5483c384-2cf2-43a9-b6e3-ec58c8af1d18",
+      "name": "CODE - Build Research Task",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2192,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "status": "={{$json.status}}",
+            "next_action": "={{$json.next_action}}",
+            "next_action_at_utc": "={{$json.next_action_at_utc}}",
+            "updated_at_utc": "={{$json.updated_at_utc}}",
+            "last_activity_at_utc": "={{$json.updated_at_utc}}"
+          },
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at_utc",
+              "displayName": "created_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at_utc",
+              "displayName": "updated_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "work_email",
+              "displayName": "work_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company_name",
+              "displayName": "company_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "business_type",
+              "displayName": "business_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "team_size",
+              "displayName": "team_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "monthly_leads",
+              "displayName": "monthly_leads",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_sources",
+              "displayName": "lead_sources",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_storage",
+              "displayName": "lead_storage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "all_leads_centralized",
+              "displayName": "all_leads_centralized",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "response_time",
+              "displayName": "response_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "assignment_method",
+              "displayName": "assignment_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "followup_method",
+              "displayName": "followup_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "missed_call_process",
+              "displayName": "missed_call_process",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "management_visibility",
+              "displayName": "management_visibility",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "main_problem",
+              "displayName": "main_problem",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "improvement_timeline",
+              "displayName": "improvement_timeline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "personal_review_requested",
+              "displayName": "personal_review_requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "system_health_score",
+              "displayName": "system_health_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "qualification_score",
+              "displayName": "qualification_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_grade",
+              "displayName": "lead_grade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "weakest_categories",
+              "displayName": "weakest_categories",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recommended_offer",
+              "displayName": "recommended_offer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "estimated_value",
+              "displayName": "estimated_value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "campaign",
+              "displayName": "campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assigned_owner",
+              "displayName": "assigned_owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_activity_at_utc",
+              "displayName": "last_activity_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action_at_utc",
+              "displayName": "next_action_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "followup_step",
+              "displayName": "followup_step",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "replied",
+              "displayName": "replied",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reply_type",
+              "displayName": "reply_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "booking_status",
+              "displayName": "booking_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "proposal_value",
+              "displayName": "proposal_value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "deal_status",
+              "displayName": "deal_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "won_revenue",
+              "displayName": "won_revenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "consent_status",
+              "displayName": "consent_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "suppressed",
+              "displayName": "suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "consent",
+              "displayName": "consent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "form_response_id",
+              "displayName": "form_response_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "submission_timestamp",
+              "displayName": "submission_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "respondent_email",
+              "displayName": "respondent_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "intake_channel",
+              "displayName": "intake_channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_source",
+              "displayName": "utm_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_medium",
+              "displayName": "utm_medium",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_campaign",
+              "displayName": "utm_campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_content",
+              "displayName": "utm_content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "referrer_url",
+              "displayName": "referrer_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "landing_page_url",
+              "displayName": "landing_page_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "form_version",
+              "displayName": "form_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "schema_version",
+              "displayName": "schema_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "prospect_timezone",
+              "displayName": "prospect_timezone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "received_at_utc",
+              "displayName": "received_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_valid",
+              "displayName": "email_valid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "free_email_domain",
+              "displayName": "free_email_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "flag_for_review",
+              "displayName": "flag_for_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "is_suppressed",
+              "displayName": "is_suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "existing_lead",
+              "displayName": "existing_lead",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scoring_version",
+              "displayName": "scoring_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_record",
+              "displayName": "lead_record",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "device_type",
+              "displayName": "device_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "browser",
+              "displayName": "browser",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_valid_syntax",
+              "displayName": "email_valid_syntax",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_is_free_domain",
+              "displayName": "email_is_free_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_needs_review",
+              "displayName": "email_needs_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "config_loom_sla_hours",
+              "displayName": "config_loom_sla_hours",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "config_followup_1_days",
+              "displayName": "config_followup_1_days",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "possible_duplicate_account",
+              "displayName": "possible_duplicate_account",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "related_lead_id",
+              "displayName": "related_lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "54ee50af-6ed5-4af0-9487-d7f0f528a56c",
+      "name": "GS - Update Lead Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2400,
+        592
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "a_lead_alert_sent",
+            "event_at_utc": "={{$json.updated_at_utc}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ due_at: $json.next_action_at_utc, message_id: $('CODE - Build Research Task').first().json.alert_message_id })}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "f2acff25-d997-48ed-bcaa-ff66c43f417f",
+      "name": "GS - Append Activity Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2608,
+        592
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const task = $('CODE - Build Research Task').first().json;\nreturn [{ json: {\n  lead_id: task.lead_id,\n  alert_sent: true,\n  due_at_utc: task.next_action_at_utc,\n  status: task.status\n} }];"
+      },
+      "id": "d271f702-de61-4c95-a892-e25b4a57eab3",
+      "name": "CODE - Set Workflow Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2816,
+        592
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "TRG - Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Lead Record": {
+      "main": [
+        [
+          {
+            "node": "CODE - Check Alert Eligibility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Check Alert Eligibility": {
+      "main": [
+        [
+          {
+            "node": "SWT - Check Alert Eligibility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SWT - Check Alert Eligibility": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Append Activity Log (Skipped Duplicate)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Append Activity Log (Lead Not Found)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Append Activity Log (Lead Not Found)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log (Skipped Duplicate)": {
+      "main": [
+        [
+          {
+            "node": "CODE - Set Workflow Output (Skipped)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log (Lead Not Found)": {
+      "main": [
+        [
+          {
+            "node": "CODE - Fail Missing Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Config": {
+      "main": [
+        [
+          {
+            "node": "CODE - Build Alert Summary and SLA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Alert Summary and SLA": {
+      "main": [
+        [
+          {
+            "node": "MAIL - Send Owner Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAIL - Send Owner Alert": {
+      "main": [
+        [
+          {
+            "node": "CODE - Build Research Task",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Research Task": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Lead Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Lead Status": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log": {
+      "main": [
+        [
+          {
+            "node": "CODE - Set Workflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "MVddORQapmz7SqgE",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "41c00af0-e842-4bc2-9e2c-5838bbd043bb",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb86bb61b361730a28aa5591f3e6d0caab6b4b67906b3c70f45af9f3cba54790"
+  },
+  "nodeGroups": [],
+  "id": "CPHsqzzwJxipLiE7",
+  "tags": []
+}

@@ -1,0 +1,1400 @@
+{
+  "name": "WF-06 - Reply Detection and Classification",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {},
+        "options": {
+          "downloadAttachments": false
+        }
+      },
+      "id": "2dffbc20-f02d-443a-bff1-ac536dff8a33",
+      "name": "TRG - Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2864,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json;\n\n// n8n's Gmail Trigger (simple: false) returns 'from' as a parsed address object, not a plain\n// string - e.g. {text: 'Name <addr>', value: [{address, name}]} - so String(fromHeader) on the\n// raw field was stringifying an object into the literal text '[object Object]' instead of the\n// address. Pull a real string out of whichever shape is actually present before regexing it.\nfunction toAddressString(field) {\n  if (!field) return '';\n  if (typeof field === 'string') return field;\n  if (typeof field === 'object') {\n    if (typeof field.text === 'string') return field.text;\n    if (Array.isArray(field.value) && field.value[0]) return field.value[0].address || field.value[0].name || '';\n    if (typeof field.address === 'string') return field.address;\n  }\n  return '';\n}\nconst fromHeader = toAddressString(msg.from) || toAddressString(msg.headers?.from) || '';\nconst emailMatch = String(fromHeader).match(/[\\w.+-]+@[\\w-]+(?:\\.[\\w-]+)*\\.[a-zA-Z]{2,}/);\nconst senderEmail = (emailMatch ? emailMatch[0] : String(fromHeader)).trim().toLowerCase();\n\nconst subject = msg.subject || msg.headers?.subject || '';\nconst bodyRaw = msg.textPlain || msg.snippet || msg.text || '';\nconst bodyExcerpt = String(bodyRaw).replace(/\\s+/g, ' ').trim().slice(0, 300);\n\nconst threadId = msg.threadId || '';\nconst messageId = msg.id || '';\nconst threadLink = threadId ? `https://mail.google.com/mail/u/0/#inbox/${threadId}` : '';\n\n// In-Reply-To (falling back to the last id in References) identifies which outbound message\n// this is a reply to, so the resolution chain below can look that message up by rfc822msgid\n// and read its X-Client-Sheet-Id header - that's how we know which client's spreadsheet to use.\nconst inReplyToHeader = msg['in-reply-to'] || msg.headers?.['in-reply-to'] || '';\nconst referencesHeader = msg.references || msg.headers?.references || '';\nfunction lastMessageId(raw) {\n  const ids = String(raw).match(/<[^<>]+>/g) || [];\n  return ids.length ? ids[ids.length - 1].replace(/[<>]/g, '').trim() : '';\n}\nconst inReplyTo = lastMessageId(inReplyToHeader) || lastMessageId(referencesHeader);\n\nreturn [{ json: {\n  sender_email: senderEmail,\n  subject,\n  body_excerpt: bodyExcerpt,\n  thread_id: threadId,\n  message_id: messageId,\n  thread_link: threadLink,\n  in_reply_to: inReplyTo,\n  received_at_utc: new Date().toISOString()\n} }];"
+      },
+      "id": "0e6df522-54c4-4634-ad8e-5b3e90032513",
+      "name": "CODE - Normalize Reply Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2640,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://gmail.googleapis.com/gmail/v1/users/me/threads/' + $json.thread_id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "format",
+              "value": "metadata"
+            },
+            {
+              "name": "metadataHeaders",
+              "value": "X-Client-Type"
+            },
+            {
+              "name": "metadataHeaders",
+              "value": "X-Client-Sheet-Id"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "id": "7a1b2c3d-4e5f-4061-8273-849506a1b2c3",
+      "name": "HTTP - Get Thread Original Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2416,
+        400
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Every message in a Gmail thread shares the same thread_id, including the original outbound one - fetching the whole thread and reading messages[0] (the thread root) resolves the right client regardless of how many reply-hops deep the current message is. Deliberately not using In-Reply-To/rfc822msgid search here: that only points at the immediate parent, so a lead replying to their own prior reply (not the original) would walk back one hop to a message that never had the custom header set, and incorrectly fall back."
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('CODE - Normalize Reply Email').first().json;\nconst response = $json;\n\nlet clientType = '';\nlet sheetId = '';\nconst firstMessage = response && Array.isArray(response.messages) && response.messages[0];\nif (firstMessage && firstMessage.payload && Array.isArray(firstMessage.payload.headers)) {\n  const getHeader = (name) => (firstMessage.payload.headers.find((h) => h.name.toLowerCase() === name.toLowerCase()) || {}).value || '';\n  clientType = getHeader('X-Client-Type');\n  sheetId = getHeader('X-Client-Sheet-Id');\n}\n\n// Falls back to the root template/ops spreadsheet whenever the thread root can't be resolved\n// (thread lookup failed, or the header is missing - e.g. it predates this feature shipping).\n// GS - Lookup Lead by Email will then correctly find no match there, and the existing\n// unmatched-reply handling (GS - Log Unmatched Reply) takes over from that point on.\nconst ROOT_FALLBACK_SHEET_ID = '1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M';\n\nreturn [{ json: {\n  ...base,\n  resolved_client_type: clientType,\n  sheet_id: sheetId || ROOT_FALLBACK_SHEET_ID\n} }];"
+      },
+      "id": "be5f6071-8293-4405-b617-283940e5f607",
+      "name": "CODE - Resolve Sheet ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2080,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "work_email",
+              "lookupValue": "={{$json.sender_email}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "3b8cc2cd-adb9-48d0-99ec-084d265cd6d3",
+      "name": "GS - Lookup Lead by Email",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -2416,
+        400
+      ],
+      "alwaysOutputData": true,
+      "notes": "Critical: without alwaysOutputData, a reply from an email with no matching lead (spam, wrong address, cc'd colleague - a normal case) returns 0 rows and kills every downstream node, including the unmatched-reply handling CODE - Check Lead Found was written to support. Same bug class as WF-05's lead lookup.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const submission = $('CODE - Normalize Reply Email').first().json;\nconst matches = $input.all();\n// alwaysOutputData guarantees at least one item even on a zero-match filter, so\n// 'matches.length > 0' is always true and cannot be used to detect \"no match\" - the\n// returned row's own work_email must be checked against what was actually searched for.\n// Live testing (2026-07-31) caught this exact gap: an unmatched reply produced a Leads\n// row with a blank lead_id instead of being routed to the unmatched-reply branch.\nconst rawLead = matches.length > 0 ? matches[0].json : null;\nconst lead = (rawLead && rawLead.lead_id && rawLead.work_email === submission.sender_email) ? rawLead : null;\n\nreturn [{ json: { ...submission, lead_found: !!lead, lead } }];"
+      },
+      "id": "df442f58-7a70-4333-aeff-75728a0e921c",
+      "name": "CODE - Check Lead Found",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2208,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.lead_found}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "05866b8c-53cc-4cba-8e5d-1c5b653c9d38",
+      "name": "IF - Lead Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1984,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_name": "WF-06 - Reply Detection and Classification",
+            "execution_id": "={{$execution.id}}",
+            "node": "GS - Lookup Lead by Email",
+            "lead_id_or_email": "={{$json.sender_email}}",
+            "event_at_utc": "={{$json.received_at_utc}}",
+            "error_summary": "={{ 'No matching lead found for reply from: ' + $json.sender_email }}",
+            "thread_link": "={{$json.thread_link}}",
+            "retry_status": "not_applicable"
+          },
+          "schema": [
+            {
+              "id": "workflow_name",
+              "displayName": "workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "node",
+              "displayName": "node",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_id_or_email",
+              "displayName": "lead_id_or_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_summary",
+              "displayName": "error_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_link",
+              "displayName": "thread_link",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "retry_status",
+              "displayName": "retry_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "abfef392-1149-40fe-b919-faf51f9f1eed",
+      "name": "GS - Log Unmatched Reply",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -1760,
+        560
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst text = `${item.subject} ${item.body_excerpt}`.toLowerCase();\n\nfunction includesAny(str, words) {\n  return words.some((w) => str.includes(w));\n}\n\nlet replyType = 'unknown';\n\nif (includesAny(text, ['unsubscribe', 'remove me', 'stop emailing', 'opt out', 'opt-out', 'do not contact'])) {\n  replyType = 'unsubscribe';\n} else if (includesAny(text, ['out of office', 'automatic reply', 'auto-reply', 'currently away', 'on vacation', \"i'm out\", 'i am out of the office'])) {\n  replyType = 'out of office';\n} else if (includesAny(text, ['not interested', 'no thanks', 'no thank you', 'please stop', 'remove from your list', 'not a fit'])) {\n  replyType = 'negative';\n} else if (includesAny(text, ['not now', 'maybe later', 'check back', 'follow up later', 'revisit this', 'next quarter', 'not right now'])) {\n  replyType = 'not now';\n} else if (includesAny(text, ['you should talk to', 'reach out to', 'introduce you to', 'better person for this', 'my colleague'])) {\n  replyType = 'referral';\n} else if (includesAny(text, ['?', 'how does', 'what is', 'can you explain', 'could you tell me', 'how much', 'how long'])) {\n  replyType = 'question';\n} else if (includesAny(text, ['interested', 'yes', 'sounds good', \"let's talk\", 'book a call', 'schedule a call', 'sounds great', 'would love to', \"let's chat\"])) {\n  replyType = 'positive';\n}\n\nreturn [{ json: { ...item, reply_type: replyType } }];"
+      },
+      "id": "52407838-1886-4e8e-a2ea-f5f4d9f595fb",
+      "name": "CODE - Classify Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1760,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "234353a1-fe5e-4dc2-902a-aa306469853b",
+      "name": "GS - Load Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -1536,
+        240
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const classified = $('CODE - Classify Reply').first().json;\nconst configRows = $input.all();\n\nconst config = {};\nfor (const row of configRows) {\n  const key = row.json.Key ?? row.json.key;\n  const value = row.json.Value ?? row.json.value;\n  if (key) config[key] = value;\n}\n\nreturn [{ json: { ...classified, config } }];"
+      },
+      "id": "7ed81ed5-9682-49ad-8ba7-2f8abf012e91",
+      "name": "CODE - Merge Config and Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1328,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "lead_id",
+              "lookupValue": "={{$json.lead.lead_id}}"
+            }
+          ]
+        },
+        "options": {
+          "returnAllMatches": true
+        }
+      },
+      "id": "gs-check-prior-reply-activity",
+      "name": "GS - Check Prior Reply Activity",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -1104,
+        400
+      ],
+      "alwaysOutputData": true,
+      "notes": "Spec 13.1 idempotency, keyed on Gmail message_id: guards against a manually re-run/retried execution re-processing the same reply. Matters especially because GS - Append Suppression List uses plain append (not upsert) - without this, a reprocessed unsubscribe would create a duplicate suppression row.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('CODE - Merge Config and Classification').first().json;\nconst priorActivity = $input.all();\n\nconst alreadyProcessed = priorActivity.some((row) => {\n  if (!['reply_received', 'unsubscribed'].includes(row.json.event_type)) return false;\n  try {\n    const details = JSON.parse(row.json.details || '{}');\n    return item.message_id && details.message_id === item.message_id;\n  } catch {\n    return false;\n  }\n});\n\nreturn [{ json: { ...item, already_processed: alreadyProcessed } }];"
+      },
+      "id": "code-check-already-processed",
+      "name": "CODE - Check Already Processed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "already-1",
+              "leftValue": "={{$json.already_processed}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-already-processed",
+      "name": "IF - Already Processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        240
+      ],
+      "notes": "True branch intentionally terminates here with no further connections - already-processed replies are a silent no-op, nothing further to log or notify."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.reply_type}}",
+              "rightValue": "unsubscribe",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "feb90e91-75df-4a77-af7b-8e46ed4f0fc9",
+      "name": "IF - Is Unsubscribe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst lead = item.lead;\nconst now = new Date().toISOString();\n\nreturn [{ json: {\n  lead_id: lead.lead_id,\n  work_email: lead.work_email,\n  suppressed: true,\n  status: 'Unsubscribed',\n  replied: true,\n  reply_type: 'unsubscribe',\n  reply_excerpt: item.body_excerpt,\n  thread_link: item.thread_link,\n  message_id: item.message_id,\n  next_action: '',\n  next_action_at_utc: '',\n  last_activity_at_utc: now\n} }];"
+      },
+      "id": "cb255e21-5113-4e96-a0f9-b22b564b674c",
+      "name": "CODE - Build Suppression Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Suppression_List",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "work_email": "={{$json.work_email}}",
+            "reason": "unsubscribe",
+            "added_at_utc": "={{$json.last_activity_at_utc}}",
+            "source_lead_id": "={{$json.lead_id}}"
+          },
+          "schema": [
+            {
+              "id": "work_email",
+              "displayName": "work_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reason",
+              "displayName": "reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "added_at_utc",
+              "displayName": "added_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source_lead_id",
+              "displayName": "source_lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "2c27fc52-2d0a-436d-a629-b3f8997f2fa2",
+      "name": "GS - Append Suppression List",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -656,
+        560
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "suppressed": "={{$json.suppressed}}",
+            "status": "={{$json.status}}",
+            "replied": "={{$json.replied}}",
+            "reply_type": "={{$json.reply_type}}",
+            "next_action": "={{$json.next_action}}",
+            "next_action_at_utc": "={{$json.next_action_at_utc}}",
+            "last_activity_at_utc": "={{$json.last_activity_at_utc}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "suppressed",
+              "displayName": "suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "replied",
+              "displayName": "replied",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reply_type",
+              "displayName": "reply_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action_at_utc",
+              "displayName": "next_action_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_activity_at_utc",
+              "displayName": "last_activity_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "532d7a5c-1cce-4f59-b752-f6d76375e29a",
+      "name": "GS - Update Lead (Suppressed)",
+      "notes": "reply_excerpt/thread_link are NOT columns in the real Leads tab - preserved in GS - Append Activity (Unsubscribed) details instead. Add those columns to Leads if you want them queryable there directly.",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -448,
+        560
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "unsubscribed",
+            "event_at_utc": "={{$json.last_activity_at_utc}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ note: 'Unsubscribe request detected in reply; suppressed immediately', reply_excerpt: $('CODE - Build Suppression Update').first().json.reply_excerpt, thread_link: $('CODE - Build Suppression Update').first().json.thread_link, message_id: $('CODE - Build Suppression Update').first().json.message_id })}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7d374a2b-4425-4745-9213-50fc094cdd68",
+      "name": "GS - Append Activity (Unsubscribed)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -224,
+        560
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst lead = item.lead;\nconst now = new Date().toISOString();\n\nconst needsOwnerAction = ['positive', 'question', 'referral'].includes(item.reply_type);\n\nlet nextAction = lead.next_action;\nlet nextActionAtUtc = lead.next_action_at_utc;\nlet status = lead.status;\n\nif (needsOwnerAction) {\n  nextAction = `Sales owner review required - ${item.reply_type} reply received`;\n  nextActionAtUtc = now;\n  status = 'Replied';\n} else if (item.reply_type === 'out of office') {\n  const reschedule = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();\n  nextActionAtUtc = reschedule;\n  nextAction = 'Resume follow-up sequence after out-of-office period';\n} else if (item.reply_type === 'negative' || item.reply_type === 'not now') {\n  status = 'Nurture';\n  nextAction = 'Light nurture only - prospect declined or deferred for now';\n  nextActionAtUtc = '';\n} else {\n  nextAction = 'Manual review - reply could not be auto-classified';\n  nextActionAtUtc = now;\n}\n\nreturn [{ json: {\n  lead_id: lead.lead_id,\n  work_email: lead.work_email,\n  replied: true,\n  reply_type: item.reply_type,\n  reply_excerpt: item.body_excerpt,\n  thread_link: item.thread_link,\n  message_id: item.message_id,\n  status,\n  next_action: nextAction,\n  next_action_at_utc: nextActionAtUtc,\n  last_activity_at_utc: now,\n  needs_owner_action: needsOwnerAction,\n  owner_email: item.config.OWNER_EMAIL || '',\n  company_name: lead.company_name\n} }];"
+      },
+      "id": "105fc1c1-9679-415d-8ba5-ab62209dba65",
+      "name": "CODE - Build Reply Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "replied": "={{$json.replied}}",
+            "reply_type": "={{$json.reply_type}}",
+            "status": "={{$json.status}}",
+            "next_action": "={{$json.next_action}}",
+            "next_action_at_utc": "={{$json.next_action_at_utc}}",
+            "last_activity_at_utc": "={{$json.last_activity_at_utc}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "replied",
+              "displayName": "replied",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reply_type",
+              "displayName": "reply_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action_at_utc",
+              "displayName": "next_action_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_activity_at_utc",
+              "displayName": "last_activity_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "91eb356b-05e6-4cf1-81b9-6fed38d6d81c",
+      "name": "GS - Update Lead (Reply)",
+      "notes": "reply_excerpt/thread_link are NOT columns in the real Leads tab - preserved in GS - Append Activity (Reply Received) details instead.",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -656,
+        80
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "reply_received",
+            "event_at_utc": "={{$json.last_activity_at_utc}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ reply_type: $json.reply_type, needs_owner_action: $('CODE - Build Reply Update').first().json.needs_owner_action, reply_excerpt: $('CODE - Build Reply Update').first().json.reply_excerpt, thread_link: $('CODE - Build Reply Update').first().json.thread_link, message_id: $('CODE - Build Reply Update').first().json.message_id })}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "cafe099c-9e83-4ac9-9653-e769bbbb2157",
+      "name": "GS - Append Activity (Reply Received)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -448,
+        80
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.needs_owner_action}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "47e1dc17-e0d7-48ad-9cee-88f6dcf8512c",
+      "name": "IF - Needs Owner Notification?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$json.owner_email}}",
+        "subject": "={{ 'Reply received (' + $json.reply_type + ') - ' + $json.company_name }}",
+        "emailType": "text",
+        "message": "={{ 'A ' + $json.reply_type + ' reply was received.\\n\\nCompany: ' + $json.company_name + '\\nExcerpt: ' + $json.reply_excerpt + '\\nThread: ' + $json.thread_link + '\\n\\nThis lead needs a human response - no automated sales reply has been sent.' }}",
+        "options": {}
+      },
+      "id": "9edbc8b3-121f-4e7d-9717-db2e7c7b2f0a",
+      "name": "MAIL - Notify Sales Owner",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "2e112666-8f1a-4692-906a-37e624109f2f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $('CODE - Build Reply Update').first().json.lead_id }}",
+            "event_type": "owner_notified",
+            "event_at_utc": "={{ new Date().toISOString() }}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ reply_type: $('CODE - Build Reply Update').first().json.reply_type, message_id: $json.id || '' })}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d1e2f3a4-b5c6-4708-9829-3a4b5c6d7e8f",
+      "name": "GS - Append Activity (Owner Notified)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "notes": "Records that the owner-notification email actually sent, with its own message_id, matching the same audit pattern WF-02 uses for result_email_sent - previously MAIL - Notify Sales Owner had no logging at all after it.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "TRG - Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "CODE - Normalize Reply Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Normalize Reply Email": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Get Thread Original Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Get Thread Original Message": {
+      "main": [
+        [
+          {
+            "node": "CODE - Resolve Sheet ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Resolve Sheet ID": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Lead by Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Lookup Lead by Email": {
+      "main": [
+        [
+          {
+            "node": "CODE - Check Lead Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Check Lead Found": {
+      "main": [
+        [
+          {
+            "node": "IF - Lead Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Lead Found?": {
+      "main": [
+        [
+          {
+            "node": "CODE - Classify Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Log Unmatched Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Classify Reply": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Config": {
+      "main": [
+        [
+          {
+            "node": "CODE - Merge Config and Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Merge Config and Classification": {
+      "main": [
+        [
+          {
+            "node": "GS - Check Prior Reply Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Check Prior Reply Activity": {
+      "main": [
+        [
+          {
+            "node": "CODE - Check Already Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Check Already Processed": {
+      "main": [
+        [
+          {
+            "node": "IF - Already Processed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Already Processed?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "IF - Is Unsubscribe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Is Unsubscribe?": {
+      "main": [
+        [
+          {
+            "node": "CODE - Build Suppression Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CODE - Build Reply Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Suppression Update": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Suppression List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Suppression List": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Lead (Suppressed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Lead (Suppressed)": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity (Unsubscribed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Reply Update": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Lead (Reply)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Lead (Reply)": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity (Reply Received)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity (Reply Received)": {
+      "main": [
+        [
+          {
+            "node": "IF - Needs Owner Notification?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Needs Owner Notification?": {
+      "main": [
+        [
+          {
+            "node": "MAIL - Notify Sales Owner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAIL - Notify Sales Owner": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity (Owner Notified)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "REPLACE_WITH_WF99_ID"
+  },
+  "versionId": "26410efb-f510-46d6-a876-b94e7ab2acd5",
+  "meta": {
+    "instanceId": "8310575579d7e2e5ff28d39122f909dfdf48741925705803ee1764ab78633012"
+  },
+  "nodeGroups": [],
+  "id": "YAusfmpP4LhlqMYY",
+  "tags": []
+}

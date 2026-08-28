@@ -1,0 +1,1598 @@
+{
+  "name": "WF-02 - Result Email Delivery",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "lead_id"
+            },
+            {
+              "name": "lead_grade"
+            },
+            {
+              "name": "sheet_id"
+            },
+            {
+              "name": "type"
+            }
+          ]
+        }
+      },
+      "id": "bb9e1fa3-650d-4db5-823a-6bcecf327480",
+      "name": "TRG - Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        3600,
+        1936
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "lead_id",
+              "lookupValue": "={{$json.lead_id}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "569894d0-e7c1-4fa9-9d9a-6fd3f7e27a49",
+      "name": "GS - Load Lead Record",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3824,
+        1936
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "alwaysOutputData is required so a lead_id that somehow has no matching row still emits one empty item, which CODE - Check Send Eligibility below turns into a 'missing' outcome instead of silently killing the branch."
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $json;\nlet sendEligibility;\nif (!lead.lead_id) {\n  // GS - Load Lead Record found nothing for this lead_id (alwaysOutputData emitted an empty item).\n  sendEligibility = 'missing';\n} else if (lead.status && lead.status !== 'New submission') {\n  // Spec 13.1 idempotency: before sending, check whether the same template/step was already\n  // successfully sent. The Leads.status column is the single source of truth (spec 3.2), not\n  // execution history, so a status other than 'New submission' means WF-02 already ran for\n  // this lead (or it moved further down the funnel) and must not send a second result email.\n  sendEligibility = 'already_sent';\n} else {\n  sendEligibility = 'eligible';\n}\nreturn [{ json: { ...lead, send_eligibility: sendEligibility } }];"
+      },
+      "id": "0b810e35-670b-4368-bf57-3ea5729be982",
+      "name": "CODE - Check Send Eligibility",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4048,
+        1936
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.send_eligibility}}",
+                    "rightValue": "eligible",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "elig-1"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.send_eligibility}}",
+                    "rightValue": "already_sent",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "elig-2"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 1
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.send_eligibility}}",
+                    "rightValue": "missing",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "elig-3"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "15ff0fb6-120c-4e72-816e-8fad1f86992b",
+      "name": "SWT - Check Send Eligibility",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        4272,
+        1904
+      ],
+      "notes": "Outputs 0=eligible, 1=already_sent, 2=missing, 3=extra (fallback safety net, routed the same as 'missing')."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "53009b1b-4dbc-4687-85c4-7c532ef04371",
+      "name": "GS - Load Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4512,
+        1728
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Email_Templates",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": []
+        },
+        "options": {}
+      },
+      "id": "cf7d59f8-459c-4dd2-bda5-d904b33cde71",
+      "name": "GS - Load Email Templates",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4736,
+        1728
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Loads template_id/subject/body rows. This is now the single source of the approved copy - CODE - Build Result Email must never hard-code subject/body text, per spec section 6.1 (Email_Templates: 'Approved subject lines and message bodies') and handover point 15.2 #10 ('explain how to change copy... without breaking workflows')."
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('GS - Load Lead Record').first().json;\nconst configRows = $('GS - Load Config').all();\nconst templateRows = $('GS - Load Email Templates').all();\n\nconst config = {};\nfor (const row of configRows) {\n  const key = row.json.Key ?? row.json.key;\n  const value = row.json.Value ?? row.json.value;\n  if (key) config[key] = value;\n}\n\nlet weakestCategories = [];\nif (Array.isArray(lead.weakest_categories)) {\n  weakestCategories = lead.weakest_categories;\n} else {\n  try { weakestCategories = JSON.parse(lead.weakest_categories || '[]'); } catch { weakestCategories = []; }\n}\n\n// Spec section 10.5 recommendation library, keyed by the same category labels CODE -\n// Calculate Scores in WF-01 writes into weakest_categories.\nconst recommendationLibrary = {\n  'Lead centralization': 'Route website, advertising, portal and call leads into one controlled lead record.',\n  'Response speed': 'Send immediate acknowledgement and create a timed assignment/escalation process.',\n  'Lead assignment': 'Apply automatic routing by location, service, availability or round-robin rules.',\n  'Follow-up': 'Create a consistent multi-step sequence with tasks, SMS/email and stop conditions.',\n  'Missed calls': 'Trigger a compliant text-back or callback task and record it against the lead.',\n  'Management visibility': 'Create a dashboard for response, contact, appointment, conversion and lost reasons.',\n  'Lead storage': 'Remove duplicate entry by connecting forms and channels to the primary CRM.'\n};\n\nconst weaknesses = weakestCategories.map((w) => ({\n  category: w.category,\n  score: w.score,\n  recommendation: recommendationLibrary[w.category] || 'Review and document this process step by step.'\n}));\n\nconst firstName = (lead.name || '').trim().split(/\\s+/)[0] || '';\nconst grade = (lead.lead_grade || '').toUpperCase();\nconst templateId = grade === 'A' ? 'result_email_a' : grade === 'B' ? 'result_email_b' : 'result_email_c';\nconst template = templateRows.map((r) => r.json).find((r) => (r.template_id ?? r.Template_ID) === templateId);\n\nif (!template) {\n  throw new Error(`WF-02: No Email_Templates row found for template_id \"${templateId}\". Add it to the Email_Templates tab before sending.`);\n}\n\n// Appends client_type onto the Cal.com booking link as the prefill value for that event\n// type's 'client_type' custom question (see WF-05's CODE - Normalize Booking Payload) - this\n// is how a booking made from this email round-trips back to the correct client spreadsheet\n// without the lead ever seeing or touching that field.\nconst clientType = $('TRG - Execute Workflow Trigger').last().json.type || '';\nconst rawBookingUrl = config.BOOKING_URL || '';\nconst bookingUrl = rawBookingUrl\n  ? `${rawBookingUrl}${rawBookingUrl.includes('?') ? '&' : '?'}client_type=${encodeURIComponent(clientType)}`\n  : '';\n\n// Token names match the literal {{...}} placeholders in the approved Email_Templates copy\n// exactly (spec section 9 / the Email_Templates tab), not the wording used anywhere else.\nconst tokens = {\n  'First Name': firstName,\n  'Company Name': lead.company_name || '',\n  'System Health Score': lead.system_health_score,\n  'Weakness 1': weaknesses[0]?.category || '',\n  'Weakness 2': weaknesses[1]?.category || '',\n  'Weakness 3': weaknesses[2]?.category || '',\n  'Recommendation 1': weaknesses[0]?.recommendation || '',\n  'Main Problem': lead.main_problem || '',\n  'Booking URL': bookingUrl,\n  'Sender Name': config.SENDER_NAME || 'The Magnetar Solutions Team'\n};\n\nfunction fillTemplate(str, map) {\n  // Live testing (2026-07-31) found the actual Email_Templates sheet uses inconsistent\n  // token casing between fields (e.g. subject: '{{company_name}}', body: '{{Company Name}}'\n  // for the same template row) - a plain exact-string lookup left the subject's token\n  // unsubstituted in the email a real prospect received. Normalize both sides so casing,\n  // underscores and spacing in the sheet never matter.\n  const normalize = (s) => String(s).toLowerCase().replace(/[_\\s]+/g, ' ').trim();\n  const normalizedMap = {};\n  for (const k in map) normalizedMap[normalize(k)] = map[k];\n  return String(str ?? '').replace(/\\{\\{\\s*([^}]+?)\\s*\\}\\}/g, (match, key) => {\n    const normalizedKey = normalize(key);\n    return Object.prototype.hasOwnProperty.call(normalizedMap, normalizedKey) ? String(normalizedMap[normalizedKey] ?? '') : match;\n  });\n}\n\nconst emailSubject = fillTemplate(template.subject, tokens);\nconst emailBody = fillTemplate(template.body, tokens);\n\nreturn [{ json: {\n  ...lead,\n  config,\n  weaknesses_with_recommendations: weaknesses,\n  first_name: firstName,\n  email_subject: emailSubject,\n  email_body: emailBody\n} }];"
+      },
+      "id": "b652d1ac-f812-49da-a0ab-cfd283e5da0c",
+      "name": "CODE - Build Result Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4960,
+        1728
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $json;\nconst stripCRLF = (s) => String(s ?? '').replace(/[\\r\\n]+/g, ' ').trim();\n\nconst to = stripCRLF(lead.work_email);\nconst subject = stripCRLF(lead.email_subject);\nconst body = String(lead.email_body ?? '');\nconst type = stripCRLF($('TRG - Execute Workflow Trigger').last().json.type);\nconst sheetId = stripCRLF($('TRG - Execute Workflow Trigger').last().json.sheet_id);\n\n// RFC 2047-encode the subject in case it contains non-ASCII characters.\nconst encodedSubject = /[^\\x00-\\x7F]/.test(subject)\n  ? `=?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`\n  : subject;\n\n// X-Client-Type/X-Client-Sheet-Id let WF-06 resolve which client's spreadsheet a reply\n// belongs to (via the original message's headers, looked up by In-Reply-To) without having\n// to search every client folder. stripCRLF on every interpolated value prevents header\n// injection, since work_email/type ultimately trace back to untrusted form input in WF-01.\nconst headers = [\n  `To: ${to}`,\n  `Subject: ${encodedSubject}`,\n  'MIME-Version: 1.0',\n  'Content-Type: text/plain; charset=\"UTF-8\"',\n  `X-Client-Type: ${type}`,\n  `X-Client-Sheet-Id: ${sheetId}`\n];\n\nconst rawMessage = headers.join('\\r\\n') + '\\r\\n\\r\\n' + body;\nconst encoded = Buffer.from(rawMessage, 'utf-8').toString('base64')\n  .replace(/\\+/g, '-')\n  .replace(/\\//g, '_')\n  .replace(/=+$/, '');\n\nreturn [{ json: { ...lead, raw: encoded } }];"
+      },
+      "id": "3a7c9b1e-5d2f-4a8b-9e6c-1f2a3b4c5d6e",
+      "name": "CODE - Build Raw Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5184,
+        1600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ raw: $json.raw }) }}",
+        "options": {}
+      },
+      "id": "4b8dac2f-6e3a-4b9c-af7d-2a3b4c5d6e7f",
+      "name": "HTTP - Send Result Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        5184,
+        1856
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Sends via the raw Gmail API instead of the standard Gmail node so a custom X-Client-Type/X-Client-Sheet-Id header can be set on the outgoing message - the standard Gmail node's send operation has no option to set custom headers. Response shape ({id, threadId, labelIds}) matches what the Gmail node used to return, so CODE - Record Send Result needed no changes."
+    },
+    {
+      "parameters": {
+        "jsCode": "const sendResult = $input.first().json;\nconst built = $('CODE - Build Result Email').first().json;\n\nreturn [{ json: {\n  lead_id: built.lead_id,\n  work_email: built.work_email,\n  lead_grade: built.lead_grade,\n  message_id: sendResult.id || '',\n  thread_id: sendResult.threadId || '',\n  subject: built.email_subject,\n  sent_at_utc: new Date().toISOString(),\n  delivery_status: 'sent'\n} }];"
+      },
+      "id": "04824dd9-f8f5-4641-993d-c4feb160fb0f",
+      "name": "CODE - Record Send Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5408,
+        1728
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "result_email_sent",
+            "event_at_utc": "={{$json.sent_at_utc}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ grade: $json.lead_grade, message_id: $json.message_id, thread_id: $json.thread_id, subject: $json.subject, delivery_status: $json.delivery_status })}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b7adbacc-066e-48b7-abbc-f00e5e47202b",
+      "name": "GS - Append Activity Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        5632,
+        1728
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "status": "Result sent",
+            "last_activity_at_utc": "={{$json.sent_at_utc}}"
+          },
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at_utc",
+              "displayName": "created_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at_utc",
+              "displayName": "updated_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "work_email",
+              "displayName": "work_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company_name",
+              "displayName": "company_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "business_type",
+              "displayName": "business_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "team_size",
+              "displayName": "team_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "monthly_leads",
+              "displayName": "monthly_leads",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_sources",
+              "displayName": "lead_sources",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_storage",
+              "displayName": "lead_storage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "all_leads_centralized",
+              "displayName": "all_leads_centralized",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "response_time",
+              "displayName": "response_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "assignment_method",
+              "displayName": "assignment_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "followup_method",
+              "displayName": "followup_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "missed_call_process",
+              "displayName": "missed_call_process",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "management_visibility",
+              "displayName": "management_visibility",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "main_problem",
+              "displayName": "main_problem",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "improvement_timeline",
+              "displayName": "improvement_timeline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "personal_review_requested",
+              "displayName": "personal_review_requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "system_health_score",
+              "displayName": "system_health_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "qualification_score",
+              "displayName": "qualification_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_grade",
+              "displayName": "lead_grade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "weakest_categories",
+              "displayName": "weakest_categories",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recommended_offer",
+              "displayName": "recommended_offer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "estimated_value",
+              "displayName": "estimated_value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "campaign",
+              "displayName": "campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assigned_owner",
+              "displayName": "assigned_owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_activity_at_utc",
+              "displayName": "last_activity_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "next_action_at_utc",
+              "displayName": "next_action_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "followup_step",
+              "displayName": "followup_step",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "replied",
+              "displayName": "replied",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reply_type",
+              "displayName": "reply_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "booking_status",
+              "displayName": "booking_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "proposal_value",
+              "displayName": "proposal_value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "deal_status",
+              "displayName": "deal_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "won_revenue",
+              "displayName": "won_revenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "consent_status",
+              "displayName": "consent_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "suppressed",
+              "displayName": "suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "consent",
+              "displayName": "consent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "form_response_id",
+              "displayName": "form_response_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "submission_timestamp",
+              "displayName": "submission_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "respondent_email",
+              "displayName": "respondent_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "intake_channel",
+              "displayName": "intake_channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_source",
+              "displayName": "utm_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_medium",
+              "displayName": "utm_medium",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_campaign",
+              "displayName": "utm_campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_content",
+              "displayName": "utm_content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "referrer_url",
+              "displayName": "referrer_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "landing_page_url",
+              "displayName": "landing_page_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "form_version",
+              "displayName": "form_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "schema_version",
+              "displayName": "schema_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "prospect_timezone",
+              "displayName": "prospect_timezone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "received_at_utc",
+              "displayName": "received_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_valid",
+              "displayName": "email_valid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "free_email_domain",
+              "displayName": "free_email_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "flag_for_review",
+              "displayName": "flag_for_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "is_suppressed",
+              "displayName": "is_suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "existing_lead",
+              "displayName": "existing_lead",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scoring_version",
+              "displayName": "scoring_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_record",
+              "displayName": "lead_record",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "device_type",
+              "displayName": "device_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "browser",
+              "displayName": "browser",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_valid_syntax",
+              "displayName": "email_valid_syntax",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_is_free_domain",
+              "displayName": "email_is_free_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_needs_review",
+              "displayName": "email_needs_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "config_loom_sla_hours",
+              "displayName": "config_loom_sla_hours",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "config_followup_1_days",
+              "displayName": "config_followup_1_days",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "possible_duplicate_account",
+              "displayName": "possible_duplicate_account",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "related_lead_id",
+              "displayName": "related_lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "a4ed8d3b-278d-4140-8904-0a470681d7a0",
+      "name": "GS - Update Lead Status",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        5856,
+        1728
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sent = $('CODE - Record Send Result').first().json;\nreturn [{ json: {\n  lead_id: sent.lead_id,\n  email_delivered: true,\n  message_id: sent.message_id,\n  delivery_status: sent.delivery_status\n} }];"
+      },
+      "id": "10f88f4b-071f-4eb6-8b57-15caab3e207c",
+      "name": "CODE - Set Workflow Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6080,
+        1728
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "result_email_skipped_duplicate",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ lead_grade: $json.lead_grade, current_status: $json.status })}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "36dbf416-23a5-472d-8d55-29b79454821d",
+      "name": "GS - Append Activity Log (Skipped Duplicate)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4512,
+        1920
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "T15 (workflow retry must be idempotent): reached when Leads.status is already past 'New submission', meaning a result email already went out for this lead. No second email is sent."
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\nreturn [{ json: {\n  lead_id: item.lead_id,\n  email_delivered: false,\n  message_id: '',\n  delivery_status: 'skipped_duplicate'\n} }];"
+      },
+      "id": "556108e4-bc21-44e9-81f5-2ff77540f8c9",
+      "name": "CODE - Set Workflow Output (Skipped)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4736,
+        1920
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('TRG - Execute Workflow Trigger').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id || ''}}",
+            "event_type": "result_email_lead_not_found",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ lead_id_requested: $json.lead_id, lead_grade: $json.lead_grade })}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "706001e0-0e8b-4116-a2a8-81de6b28490b",
+      "name": "GS - Append Activity Log (Lead Not Found)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4512,
+        2128
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Logged before the failure below so the event survives even though the execution ultimately errors out."
+    },
+    {
+      "parameters": {
+        "jsCode": "throw new Error(`WF-02: No Leads row found for lead_id \"${$json.lead_id}\". Cannot send result email - check that WF-01 upserted this lead before calling WF-02.`);"
+      },
+      "id": "20826ea4-cdb3-4799-b186-d663d71c908a",
+      "name": "CODE - Fail Missing Lead Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4736,
+        2128
+      ],
+      "notes": "Deliberately throws so this execution is marked failed and routes to the workflow's Error Workflow (WF-99), per spec 8.8 and the Critical severity row in 13.3."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "TRG - Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Lead Record": {
+      "main": [
+        [
+          {
+            "node": "CODE - Check Send Eligibility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Check Send Eligibility": {
+      "main": [
+        [
+          {
+            "node": "SWT - Check Send Eligibility",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SWT - Check Send Eligibility": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Append Activity Log (Skipped Duplicate)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Append Activity Log (Lead Not Found)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Append Activity Log (Lead Not Found)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Config": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Email Templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Email Templates": {
+      "main": [
+        [
+          {
+            "node": "CODE - Build Result Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Result Email": {
+      "main": [
+        [
+          {
+            "node": "CODE - Build Raw Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Raw Email": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Send Result Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Send Result Email": {
+      "main": [
+        [
+          {
+            "node": "CODE - Record Send Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Record Send Result": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Lead Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Lead Status": {
+      "main": [
+        [
+          {
+            "node": "CODE - Set Workflow Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log (Skipped Duplicate)": {
+      "main": [
+        [
+          {
+            "node": "CODE - Set Workflow Output (Skipped)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log (Lead Not Found)": {
+      "main": [
+        [
+          {
+            "node": "CODE - Fail Missing Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "MVddORQapmz7SqgE",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "9fbed2ad-b8da-4ccb-9e91-a04b67a290bd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb86bb61b361730a28aa5591f3e6d0caab6b4b67906b3c70f45af9f3cba54790"
+  },
+  "nodeGroups": [],
+  "id": "Cg4mgbv9FFhM9FBt",
+  "tags": []
+}

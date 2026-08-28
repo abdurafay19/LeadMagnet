@@ -1,0 +1,1324 @@
+{
+  "name": "WF-05 - Booking Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "booking-sync",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "d1c7c006-19bc-4eb6-90d0-2ac419a7ad1d",
+      "name": "TRG - Cal.com Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1760,
+        320
+      ],
+      "webhookId": "booking-sync"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body ?? $input.first().json;\n\n// Cal.com webhook shape: { triggerEvent, createdAt, payload: { organizer, attendees: [...],\n// title, startTime, endTime, uid, responses: { <questionIdentifier>: { label, value } } } }.\n// Custom booking questions can come back either as a {label, value} object or a plain string\n// depending on question type/Cal.com version, so both are handled below.\nconst payload = body.payload || {};\nconst attendee = (Array.isArray(payload.attendees) && payload.attendees[0]) || {};\nconst responses = payload.responses || {};\n\n// 'client_type' is the identifier of a hidden/prefilled custom booking question on the Cal.com\n// event type - the Booking_URL sent in WF-02/WF-04 emails appends ?client_type={{type}} so the\n// booker's chosen client folder round-trips back through the booking without them touching it.\nconst rawClientType = responses.client_type;\nconst clientType = (rawClientType && typeof rawClientType === 'object') ? (rawClientType.value ?? '') : (rawClientType ?? '');\n\nconst inviteeEmail = String(attendee.email || '').trim().toLowerCase();\nconst meetingStartUtc = payload.startTime || '';\nconst inviteeTimezone = attendee.timeZone || '';\nconst eventName = payload.title || 'Discovery call';\nconst bookingUid = payload.uid || '';\nconst rawEventType = body.triggerEvent || '';\n\nreturn [{ json: {\n  invitee_email: inviteeEmail,\n  meeting_start_utc: meetingStartUtc,\n  invitee_timezone: inviteeTimezone,\n  event_name: eventName,\n  booking_uid: bookingUid,\n  raw_event_type: rawEventType,\n  client_type: String(clientType).trim()\n} }];"
+      },
+      "id": "b4f92389-4a44-42ea-a350-7d6c1e56c73b",
+      "name": "CODE - Normalize Booking Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $json.client_type }}",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6",
+            "mode": "list",
+            "cachedResultName": "Lead Magnet",
+            "cachedResultUrl": "https://drive.google.com/drive/folders/1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6"
+          },
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -1472,
+        160
+      ],
+      "id": "c1d2e3f4-5061-4728-9394-051627c3d4e5",
+      "name": "GD - Search Client Folder",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      },
+      "notes": "Looks up the client folder directly by name (client_type from the booking's custom question) instead of searching every client folder like WF-06 has to - Cal.com gives us the exact name up front."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d2e3f4a5-6172-4839-a405-162738d4e5f6",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1400,
+        160
+      ],
+      "id": "e3f4a5b6-7283-4940-a516-273849e5f607",
+      "name": "IF - Client Folder Found?"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $('CODE - Normalize Booking Payload').first().json.client_type }}",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.id }}",
+            "mode": "id"
+          },
+          "whatToSearch": "files"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        -1328,
+        80
+      ],
+      "id": "f4a5b6c7-8394-4051-9627-384950e6f718",
+      "name": "GD - Search Client Sheet",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('CODE - Normalize Booking Payload').first().json;\nconst current = $json;\nconst sheetId = (current && current.id) ? current.id : '';\n\n// Falls back to the root template/ops spreadsheet when client_type is blank, the client\n// folder doesn't exist, or the folder has no matching spreadsheet inside it. GS - Lookup\n// Lead by Email will then correctly find no match there, and the existing unmatched-booking\n// handling (GS - Log Unmatched Booking) takes over from that point on.\nconst ROOT_FALLBACK_SHEET_ID = '1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M';\n\nreturn [{ json: { ...base, sheet_id: sheetId || ROOT_FALLBACK_SHEET_ID } }];"
+      },
+      "id": "a5b6c7d8-9405-4162-a738-495061f7f829",
+      "name": "CODE - Resolve Sheet ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "work_email",
+              "lookupValue": "={{$json.invitee_email}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6486c7a5-7112-4103-91b0-ff1657c32383",
+      "name": "GS - Lookup Lead by Email",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -1328,
+        320
+      ],
+      "alwaysOutputData": true,
+      "notes": "Critical: without alwaysOutputData, an invitee email with no matching lead (a normal, expected case - e.g. someone books without going through the funnel) returns 0 rows, which kills every downstream node including the unmatched-booking handling that CODE - Check Lead Found was clearly written to support. Without this flag the webhook never responds at all.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const submission = $('CODE - Normalize Booking Payload').first().json;\nconst matches = $input.all();\n// alwaysOutputData guarantees at least one item even on a zero-match filter, so\n// 'matches.length > 0' is always true and cannot be used to detect \"no match\" - the\n// returned row's own work_email must be checked against what was actually searched for\n// (same class of bug found live-testing WF-01's lookups on 2026-07-31).\nconst rawLead = matches.length > 0 ? matches[0].json : null;\nconst lead = (rawLead && rawLead.lead_id && rawLead.work_email === submission.invitee_email) ? rawLead : null;\n\nreturn [{ json: { ...submission, lead_found: !!lead, lead } }];"
+      },
+      "id": "55c6343f-b78a-49ee-8b3c-6add515faf2f",
+      "name": "CODE - Check Lead Found",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.lead_found}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "68c50ebf-3364-4a89-ab9b-1213b6d3ca37",
+      "name": "IF - Lead Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflow_name": "WF-05 - Booking Sync",
+            "execution_id": "={{$execution.id}}",
+            "node": "GS - Lookup Lead by Email",
+            "lead_id_or_email": "={{$json.invitee_email}}",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "error_summary": "={{ 'No matching lead found for invitee email: ' + $json.invitee_email }}",
+            "raw_event_type": "={{$json.raw_event_type}}",
+            "retry_status": "not_applicable"
+          },
+          "schema": [
+            {
+              "id": "workflow_name",
+              "displayName": "workflow_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "node",
+              "displayName": "node",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_id_or_email",
+              "displayName": "lead_id_or_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "error_summary",
+              "displayName": "error_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "raw_event_type",
+              "displayName": "raw_event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "retry_status",
+              "displayName": "retry_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "d3ff9b6d-4f83-49e7-a176-8439695f521b",
+      "name": "GS - Log Unmatched Booking",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -656,
+        480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"ok\", \"message\": \"Received, no matching lead on file.\" } }}",
+        "options": {}
+      },
+      "id": "1969161f-dcc8-4269-bda6-6f5fb24778af",
+      "name": "RESPOND - Lead Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -448,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "8494016e-42ff-4db3-b293-c61f9736e937",
+      "name": "GS - Load Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -656,
+        160
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const found = $('CODE - Check Lead Found').first().json;\nconst configRows = $input.all();\n\nconst config = {};\nfor (const row of configRows) {\n  const key = row.json.Key ?? row.json.key;\n  const value = row.json.Value ?? row.json.value;\n  if (key) config[key] = value;\n}\n\nreturn [{ json: { ...found, config } }];"
+      },
+      "id": "eb2ee4d3-276d-450c-b07f-398cf8527bef",
+      "name": "CODE - Merge Config and Lead Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "lead_id",
+              "lookupValue": "={{$json.lead.lead_id}}"
+            }
+          ]
+        },
+        "options": {
+          "returnAllMatches": true
+        }
+      },
+      "id": "gs-check-prior-booking-activity",
+      "name": "GS - Check Prior Booking Activity",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -224,
+        320
+      ],
+      "alwaysOutputData": true,
+      "notes": "Spec 13.1 idempotency: booking webhooks are commonly retried by the provider on a slow/timed-out response. Without this check a retry would send a duplicate owner-notification email and duplicate Activity_Log entry for the same event.",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $('CODE - Merge Config and Lead Info').first().json;\nconst priorActivity = $input.all();\nconst isCancellation = String(item.raw_event_type || '').toLowerCase().includes('cancel');\n// Cal.com's BOOKING_RESCHEDULED keeps the same booking_uid as the original BOOKING_CREATED,\n// so it needs its own event_type - otherwise it would match the original 'booking_created'\n// activity row on booking_uid alone and get silently treated as already processed, and the\n// lead's next_action_at_utc would never move to the new meeting time.\nconst isReschedule = String(item.raw_event_type || '').toLowerCase().includes('reschedul');\nconst targetEventType = isCancellation ? 'booking_cancelled' : isReschedule ? 'booking_rescheduled' : 'booking_created';\n\nconst alreadyProcessed = priorActivity.some((row) => {\n  if (row.json.event_type !== targetEventType) return false;\n  try {\n    const details = JSON.parse(row.json.details || '{}');\n    if (!item.booking_uid || details.booking_uid !== item.booking_uid) return false;\n    // A second reschedule reuses the same booking_uid again, so also compare meeting_start_utc -\n    // a genuine new reschedule has a new start time and must not be deduped against the first one.\n    if (targetEventType === 'booking_rescheduled') return details.meeting_start_utc === item.meeting_start_utc;\n    return true;\n  } catch {\n    return false;\n  }\n});\n\nreturn [{ json: { ...item, is_reschedule: isReschedule, already_processed: alreadyProcessed } }];"
+      },
+      "id": "code-check-already-processed",
+      "name": "CODE - Check Already Processed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "already-1",
+              "leftValue": "={{$json.already_processed}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-already-processed",
+      "name": "IF - Already Processed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"ok\", \"message\": \"Already processed, no action taken.\" } }}",
+        "options": {}
+      },
+      "id": "respond-already-processed",
+      "name": "RESPOND - Already Processed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.raw_event_type}}",
+              "rightValue": "cancel",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "2e962cdb-e0da-4e49-85a6-622e0360b5f7",
+      "name": "IF - Is Cancellation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst lead = item.lead;\nconst now = new Date().toISOString();\n\nreturn [{ json: {\n  lead_id: lead.lead_id,\n  company_name: lead.company_name,\n  booking_status: 'cancelled',\n  status: 'Call booked',\n  next_action: 'Manual review - booking was cancelled, decide whether to re-engage',\n  next_action_at_utc: now,\n  last_activity_at_utc: now,\n  owner_email: item.config.OWNER_EMAIL || '',\n  booking_uid: item.booking_uid || ''\n} }];"
+      },
+      "id": "89101716-9c12-4eb5-aff6-e252910c0ea2",
+      "name": "CODE - Build Cancellation Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "booking_status": "={{$json.booking_status}}",
+            "status": "={{$json.status}}",
+            "next_action": "={{$json.next_action}}",
+            "next_action_at_utc": "={{$json.next_action_at_utc}}",
+            "last_activity_at_utc": "={{$json.last_activity_at_utc}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "booking_status",
+              "displayName": "booking_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action_at_utc",
+              "displayName": "next_action_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_activity_at_utc",
+              "displayName": "last_activity_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "58a343a5-155b-46c8-81f3-dc54113a2681",
+      "name": "GS - Update Lead (Cancelled)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "booking_cancelled",
+            "event_at_utc": "={{$json.last_activity_at_utc}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ note: 'Booking cancelled - flagged for manual review', booking_uid: $('CODE - Build Cancellation Update').first().json.booking_uid })}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c8a3d78d-83c8-428c-a557-5abdcc810c49",
+      "name": "GS - Append Activity (Cancelled)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        480
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$('CODE - Build Cancellation Update').item.json.owner_email}}",
+        "subject": "={{ 'Booking cancelled - ' + $('CODE - Build Cancellation Update').item.json.company_name }}",
+        "emailType": "text",
+        "message": "={{ 'A previously booked call was cancelled.\\n\\nCompany: ' + $('CODE - Build Cancellation Update').item.json.company_name + '\\nAction needed: decide whether to re-engage or move to nurture.' }}",
+        "options": {}
+      },
+      "id": "a5dd49b6-0a1e-4ca0-bf84-87681a1d036d",
+      "name": "MAIL - Notify Owner (Cancellation)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        672,
+        480
+      ],
+      "webhookId": "bbb8239a-bce5-4526-a00b-b86e36738520",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"ok\", \"message\": \"Cancellation recorded.\" } }}",
+        "options": {}
+      },
+      "id": "954e47be-145b-43c2-aba1-153665790ba3",
+      "name": "RESPOND - Success (Cancelled)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst config = item.config;\nconst lead = item.lead;\n\nconst timezone = item.invitee_timezone || config.DEFAULT_TIMEZONE || 'America/New_York';\n\nfunction formatLocal(utcIso, tz) {\n  if (!utcIso) return '';\n  try {\n    return new Date(utcIso).toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'short' });\n  } catch (e) {\n    return utcIso;\n  }\n}\n\nconst meetingStartUtc = item.meeting_start_utc;\nconst meetingStartLocal = formatLocal(meetingStartUtc, timezone);\nconst now = new Date().toISOString();\nconst isReschedule = !!item.is_reschedule;\n\nreturn [{ json: {\n  lead_id: lead.lead_id,\n  company_name: lead.company_name,\n  booking_status: 'booked',\n  status: 'Call booked',\n  next_action: isReschedule ? 'Call rescheduled: review updated meeting time' : 'Prepare for call: review lead record and main problem before the meeting',\n  next_action_at_utc: meetingStartUtc || now,\n  meeting_start_utc: meetingStartUtc,\n  meeting_start_local: meetingStartLocal,\n  meeting_timezone: timezone,\n  event_name: item.event_name,\n  last_activity_at_utc: now,\n  owner_email: config.OWNER_EMAIL || '',\n  booking_uid: item.booking_uid || '',\n  is_reschedule: isReschedule,\n  event_type: isReschedule ? 'booking_rescheduled' : 'booking_created'\n} }];"
+      },
+      "id": "6e2adb53-8c2e-46e0-a2f5-42d9d11efef0",
+      "name": "CODE - Build Booking Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "booking_status": "={{$json.booking_status}}",
+            "status": "={{$json.status}}",
+            "next_action": "={{$json.next_action}}",
+            "next_action_at_utc": "={{$json.next_action_at_utc}}",
+            "last_activity_at_utc": "={{$json.last_activity_at_utc}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "booking_status",
+              "displayName": "booking_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action_at_utc",
+              "displayName": "next_action_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_activity_at_utc",
+              "displayName": "last_activity_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bb4613cf-f48e-47fe-9814-4792d8cfab43",
+      "name": "GS - Update Lead (Booked)",
+      "notes": "meeting_start_utc/meeting_start_local/meeting_timezone are NOT columns in the real Leads tab, so they are deliberately not written here (would risk a defineBelow write error against a non-existent column) - they are preserved in GS - Append Activity (Booked) instead. Add those 3 columns to Leads if you want them queryable there directly.",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('CODE - Resolve Sheet ID').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "={{$json.event_type}}",
+            "event_at_utc": "={{$json.last_activity_at_utc}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ meeting_start_utc: $('CODE - Build Booking Update').first().json.meeting_start_utc, meeting_start_local: $('CODE - Build Booking Update').first().json.meeting_start_local, meeting_timezone: $('CODE - Build Booking Update').first().json.meeting_timezone, event_name: $('CODE - Build Booking Update').first().json.event_name, booking_uid: $('CODE - Build Booking Update').first().json.booking_uid })}}"
+          },
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4bbc3edd-6934-46d0-aabb-a77eb0484861",
+      "name": "GS - Append Activity (Booked)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{$('CODE - Build Booking Update').item.json.owner_email}}",
+        "subject": "={{ ($('CODE - Build Booking Update').item.json.is_reschedule ? 'Call rescheduled - ' : 'Call booked - ') + $('CODE - Build Booking Update').item.json.company_name }}",
+        "emailType": "text",
+        "message": "={{ ($('CODE - Build Booking Update').item.json.is_reschedule ? 'A call was rescheduled to a new time.' : 'A call has been booked.') + '\\n\\nCompany: ' + $('CODE - Build Booking Update').item.json.company_name + '\\nMeeting time (local): ' + $('CODE - Build Booking Update').item.json.meeting_start_local + ' (' + $('CODE - Build Booking Update').item.json.meeting_timezone + ')\\nEvent: ' + $('CODE - Build Booking Update').item.json.event_name }}",
+        "options": {}
+      },
+      "id": "7c1db419-77b7-4f14-9e08-11cd3b9ccc8b",
+      "name": "MAIL - Notify Owner (Booking)",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        672,
+        0
+      ],
+      "webhookId": "dceaf525-992a-43fa-bc1d-c35ed843a42f",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"ok\", \"message\": \"Booking recorded.\" } }}",
+        "options": {}
+      },
+      "id": "f1d64e65-def3-48ba-aa64-617c3e0d4bce",
+      "name": "RESPOND - Success (Booked)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "TRG - Cal.com Webhook": {
+      "main": [
+        [
+          {
+            "node": "CODE - Normalize Booking Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Normalize Booking Payload": {
+      "main": [
+        [
+          {
+            "node": "GD - Search Client Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Search Client Folder": {
+      "main": [
+        [
+          {
+            "node": "IF - Client Folder Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Client Folder Found?": {
+      "main": [
+        [
+          {
+            "node": "GD - Search Client Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CODE - Resolve Sheet ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Search Client Sheet": {
+      "main": [
+        [
+          {
+            "node": "CODE - Resolve Sheet ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Resolve Sheet ID": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Lead by Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Lookup Lead by Email": {
+      "main": [
+        [
+          {
+            "node": "CODE - Check Lead Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Check Lead Found": {
+      "main": [
+        [
+          {
+            "node": "IF - Lead Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Lead Found?": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Log Unmatched Booking",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Log Unmatched Booking": {
+      "main": [
+        [
+          {
+            "node": "RESPOND - Lead Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Config": {
+      "main": [
+        [
+          {
+            "node": "CODE - Merge Config and Lead Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Merge Config and Lead Info": {
+      "main": [
+        [
+          {
+            "node": "GS - Check Prior Booking Activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Check Prior Booking Activity": {
+      "main": [
+        [
+          {
+            "node": "CODE - Check Already Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Check Already Processed": {
+      "main": [
+        [
+          {
+            "node": "IF - Already Processed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Already Processed?": {
+      "main": [
+        [
+          {
+            "node": "RESPOND - Already Processed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF - Is Cancellation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Is Cancellation?": {
+      "main": [
+        [
+          {
+            "node": "CODE - Build Cancellation Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CODE - Build Booking Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Cancellation Update": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Lead (Cancelled)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Lead (Cancelled)": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity (Cancelled)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity (Cancelled)": {
+      "main": [
+        [
+          {
+            "node": "MAIL - Notify Owner (Cancellation)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAIL - Notify Owner (Cancellation)": {
+      "main": [
+        [
+          {
+            "node": "RESPOND - Success (Cancelled)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Booking Update": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Lead (Booked)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Lead (Booked)": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity (Booked)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity (Booked)": {
+      "main": [
+        [
+          {
+            "node": "MAIL - Notify Owner (Booking)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MAIL - Notify Owner (Booking)": {
+      "main": [
+        [
+          {
+            "node": "RESPOND - Success (Booked)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "errorWorkflow": "REPLACE_WITH_WF99_ID"
+  },
+  "versionId": "61431d51-bb56-42b3-ac4b-f522fdc6ecba",
+  "meta": {
+    "instanceId": "8310575579d7e2e5ff28d39122f909dfdf48741925705803ee1764ab78633012"
+  },
+  "nodeGroups": [],
+  "id": "Bkt3KfxU4LyQGk1h",
+  "tags": []
+}

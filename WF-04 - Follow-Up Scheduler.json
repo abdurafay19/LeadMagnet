@@ -1,0 +1,1455 @@
+{
+  "name": "WF-04 - Follow-Up Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "6fdf4d94-1e9b-44c1-95eb-5990f2645464",
+      "name": "TRG - Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1312,
+        2816
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst config = {};\nfor (const row of rows) {\n  const key = row.json.Key ?? row.json.key;\n  const value = row.json.Value ?? row.json.value;\n  if (key) config[key] = value;\n}\nreturn [{ json: { config } }];"
+      },
+      "id": "2768e2e0-d28d-4f8d-a472-5c56bf02f8e8",
+      "name": "CODE - Parse Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2528,
+        2816
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Email_Templates",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "500516bb-a934-40e8-9592-9a9d89c85e6f",
+      "name": "GS - Load Email Templates",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2736,
+        2816
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Loaded once, outside the per-lead loop, and referenced by name from CODE - Build Follow-up Message so followup_step_1/2/3 copy always comes from the approved Email_Templates tab (spec 6.1), never hard-coded."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "b5d100be-b194-40fa-b657-8f8cabd272b3",
+      "name": "GS - Read All Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2944,
+        2816
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $('GS - Read All Leads').all();\nconst now = new Date();\n\nconst terminalStatuses = ['Won', 'Lost', 'Unsubscribed', 'Invalid', 'A-level review required', 'Loom prepared', 'Contacted', 'Call completed', 'Proposal required', 'Proposal sent', 'Negotiation'];\nconst stopBookingStatuses = ['booked', 'completed', 'cancelled'];\nconst MAX_FOLLOWUP_STEP = 3;\n\nconst eligible = items.filter((item) => {\n  const lead = item.json;\n\n  const isSuppressed = lead.suppressed === true || String(lead.suppressed).toLowerCase() === 'true';\n  if (isSuppressed) return false;\n\n  if (terminalStatuses.includes(lead.status)) return false;\n  if (['won', 'lost'].includes(String(lead.deal_status || '').toLowerCase())) return false;\n  if (stopBookingStatuses.includes(String(lead.booking_status || '').toLowerCase())) return false;\n\n  const replied = lead.replied === true || String(lead.replied).toLowerCase() === 'true';\n  if (replied) {\n    // Spec 6.2 enum spells this 'out of office' (spaces). Normalizing away underscores/hyphens\n    // makes this match regardless of which exact form WF-06 (Reply Detection) writes.\n    const isOutOfOffice = String(lead.reply_type || '').toLowerCase().replace(/[_-]/g, ' ').trim() === 'out of office';\n    if (!isOutOfOffice) return false;\n    if (!lead.next_action_at_utc) return false;\n  }\n\n  const followupStep = Number(lead.followup_step) || 0;\n  if (followupStep >= MAX_FOLLOWUP_STEP) return false;\n\n  if (!lead.next_action_at_utc) return false;\n  const dueAt = new Date(lead.next_action_at_utc);\n  if (isNaN(dueAt.getTime()) || dueAt > now) return false;\n\n  return true;\n});\n\nreturn eligible;"
+      },
+      "id": "9ee3919a-0471-4f24-8f5e-b0aeaa44e9cb",
+      "name": "CODE - Filter Due and Eligible Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3152,
+        2816
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "033b7753-d1a3-41ec-b58e-d66cbcbe8dc5",
+      "name": "LOOP - Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        3376,
+        2816
+      ],
+      "executeOnce": false
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('LOOP - Split In Batches').first().json;\nconst config = $('CODE - Parse Config').first().json.config;\nconst templateRows = $('GS - Load Email Templates').all();\n\n// Idempotency relies solely on Leads.followup_step/next_action_at_utc (spec 3.2: the Leads\n// row is the single source of truth, not execution/activity history) - CODE - Filter Due and\n// Eligible Leads already only lets a lead reach this loop if it is genuinely due, so no\n// separate Activity_Log lookup is needed here.\n\nlet weakestCategories = [];\ntry { weakestCategories = JSON.parse(lead.weakest_categories || '[]'); } catch (e) { weakestCategories = []; }\nconst weakness1 = weakestCategories[0]?.category || 'your current lead process';\n\n// WF-01 stores lead_sources as a comma-separated string (spec 6.2: 'Comma-separated labels or\n// JSON array'), not JSON - parsing it as JSON here previously always threw, was swallowed, and\n// silently fell back to the generic 'your lead sources' phrase on every single follow-up.\nconst leadSources = String(lead.lead_sources || '').split(',').map((s) => s.trim()).filter(Boolean);\nconst relevantSource = leadSources[0] || 'your lead sources';\n\n// lead_storage is stored lowercased for WF-01 scoring purposes; map back to natural phrasing\n// instead of dropping raw values like 'crm' or 'different systems' into customer-facing copy.\nconst STORAGE_DISPLAY = {\n  crm: 'your CRM',\n  'property software': 'your property software',\n  sheets: 'your spreadsheet',\n  email: 'your email inbox',\n  'different systems': 'your different systems',\n  'not sure': 'your current system'\n};\nconst currentSystem = STORAGE_DISPLAY[String(lead.lead_storage || '').toLowerCase()] || 'your current system';\n\nconst followupStep = Number(lead.followup_step) || 0;\nconst stepNumber = followupStep + 1;\nconst firstName = (lead.name || '').trim().split(/\\s+/)[0] || lead.name || '';\n\nconst templateId = `followup_step_${Math.min(stepNumber, 3)}`;\nconst template = templateRows.map((r) => r.json).find((r) => (r.template_id ?? r.Template_ID) === templateId);\n\nif (!template) {\n  throw new Error(`WF-04: No Email_Templates row found for template_id \"${templateId}\". Add it to the Email_Templates tab before sending.`);\n}\n\n// Token names match the literal {{...}} placeholders in the approved followup_step_1/2/3 rows.\nconst tokens = {\n  'First Name': firstName,\n  'Weakness 1': weakness1,\n  'Relevant Source': relevantSource,\n  'Current System': currentSystem,\n  'Main Problem': lead.main_problem || ''\n};\n\nfunction fillTemplate(str, map) {\n  // Same fix as WF-02: the live Email_Templates sheet has inconsistent token casing between\n  // fields, so token matching must be case/spacing-insensitive rather than an exact string match.\n  const normalize = (s) => String(s).toLowerCase().replace(/[_\\s]+/g, ' ').trim();\n  const normalizedMap = {};\n  for (const k in map) normalizedMap[normalize(k)] = map[k];\n  return String(str ?? '').replace(/\\{\\{\\s*([^}]+?)\\s*\\}\\}/g, (match, key) => {\n    const normalizedKey = normalize(key);\n    return Object.prototype.hasOwnProperty.call(normalizedMap, normalizedKey) ? String(normalizedMap[normalizedKey] ?? '') : match;\n  });\n}\n\nconst subject = fillTemplate(template.subject, tokens);\nconst body = fillTemplate(template.body, tokens);\n\nreturn [{ json: {\n  ...lead,\n  config,\n  followup_subject: subject,\n  followup_body: body,\n  step_number: stepNumber\n} }];"
+      },
+      "id": "9af8b82e-2e8d-49d9-8cd6-2e533ff504ec",
+      "name": "CODE - Build Follow-up Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3616,
+        2960
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $json;\nconst stripCRLF = (s) => String(s ?? '').replace(/[\\r\\n]+/g, ' ').trim();\n\nconst to = stripCRLF(lead.work_email);\nconst subject = stripCRLF(lead.followup_subject);\nconst body = String(lead.followup_body ?? '');\nconst type = stripCRLF($('GD - Search File').last().json.name);\nconst sheetId = stripCRLF($('GD - Search File').last().json.id);\n\n// RFC 2047-encode the subject in case it contains non-ASCII characters.\nconst encodedSubject = /[^\\x00-\\x7F]/.test(subject)\n  ? `=?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`\n  : subject;\n\n// X-Client-Type/X-Client-Sheet-Id let WF-06 resolve which client's spreadsheet a reply\n// belongs to (via the original message's headers, looked up by In-Reply-To) without having\n// to search every client folder. stripCRLF on every interpolated value prevents header\n// injection, since work_email ultimately traces back to untrusted form input in WF-01.\nconst headers = [\n  `To: ${to}`,\n  `Subject: ${encodedSubject}`,\n  'MIME-Version: 1.0',\n  'Content-Type: text/plain; charset=\"UTF-8\"',\n  `X-Client-Type: ${type}`,\n  `X-Client-Sheet-Id: ${sheetId}`\n];\n\nconst rawMessage = headers.join('\\r\\n') + '\\r\\n\\r\\n' + body;\nconst encoded = Buffer.from(rawMessage, 'utf-8').toString('base64')\n  .replace(/\\+/g, '-')\n  .replace(/\\//g, '_')\n  .replace(/=+$/, '');\n\nreturn [{ json: { ...lead, raw: encoded } }];"
+      },
+      "id": "5c9dab2e-7f4b-4a1d-9e5c-3b4c5d6e7f80",
+      "name": "CODE - Build Raw Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3840,
+        2860
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ raw: $json.raw }) }}",
+        "options": {}
+      },
+      "id": "6dabce3f-8a5c-4b2e-af6d-4c5d6e7f8091",
+      "name": "HTTP - Send Follow-up Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3840,
+        3060
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "K0aEhfZvTx9f7hTm",
+          "name": "Gmail account"
+        }
+      },
+      "notes": "Sends via the raw Gmail API instead of the standard Gmail node so a custom X-Client-Type/X-Client-Sheet-Id header can be set on the outgoing message - the standard Gmail node's send operation has no option to set custom headers. Response shape ({id, threadId, labelIds}) matches what the Gmail node used to return, so CODE - Compute Update Fields needed no changes."
+    },
+    {
+      "parameters": {
+        "jsCode": "const built = $('CODE - Build Follow-up Message').first().json;\nconst sendResult = $input.first().json;\nconst config = built.config;\nconst newStep = built.step_number;\nconst now = new Date().toISOString();\n\nfunction addBusinessDays(date, days) {\n  const result = new Date(date);\n  let added = 0;\n  while (added < days) {\n    result.setDate(result.getDate() + 1);\n    const day = result.getDay();\n    if (day !== 0 && day !== 6) added++;\n  }\n  return result;\n}\n\nconst anchor = new Date(built.created_at_utc || built.last_activity_at_utc || now);\nconst followupDaysMap = {\n  1: Number(config.FOLLOWUP_2_DAYS) || 7,\n  2: Number(config.FOLLOWUP_3_DAYS) || 12\n};\n\nlet nextActionAtUtc = '';\nlet nextAction = '';\nlet status = built.status;\n\nif (newStep < 3 && followupDaysMap[newStep]) {\n  nextActionAtUtc = addBusinessDays(anchor, followupDaysMap[newStep]).toISOString();\n  nextAction = `Send follow-up step ${newStep + 1}`;\n} else {\n  nextActionAtUtc = '';\n  nextAction = 'Follow-up sequence complete - move to light nurture';\n  status = 'Nurture';\n}\n\nreturn [{ json: {\n  lead_id: built.lead_id,\n  followup_step: newStep,\n  next_action: nextAction,\n  next_action_at_utc: nextActionAtUtc,\n  status,\n  last_activity_at_utc: now,\n  followup_message_id: sendResult.id || ''\n} }];"
+      },
+      "id": "cf0add47-9296-4a22-a047-96079d46f579",
+      "name": "CODE - Compute Update Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4064,
+        2960
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "followup_step": "={{$json.followup_step}}",
+            "next_action": "={{$json.next_action}}",
+            "next_action_at_utc": "={{$json.next_action_at_utc}}",
+            "status": "={{$json.status}}",
+            "last_activity_at_utc": "={{$json.last_activity_at_utc}}"
+          },
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at_utc",
+              "displayName": "created_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at_utc",
+              "displayName": "updated_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "work_email",
+              "displayName": "work_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company_name",
+              "displayName": "company_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "business_type",
+              "displayName": "business_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "team_size",
+              "displayName": "team_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "monthly_leads",
+              "displayName": "monthly_leads",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_sources",
+              "displayName": "lead_sources",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_storage",
+              "displayName": "lead_storage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "all_leads_centralized",
+              "displayName": "all_leads_centralized",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "response_time",
+              "displayName": "response_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "assignment_method",
+              "displayName": "assignment_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "followup_method",
+              "displayName": "followup_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "missed_call_process",
+              "displayName": "missed_call_process",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "management_visibility",
+              "displayName": "management_visibility",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "main_problem",
+              "displayName": "main_problem",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "improvement_timeline",
+              "displayName": "improvement_timeline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "personal_review_requested",
+              "displayName": "personal_review_requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "system_health_score",
+              "displayName": "system_health_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "qualification_score",
+              "displayName": "qualification_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_grade",
+              "displayName": "lead_grade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "weakest_categories",
+              "displayName": "weakest_categories",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "recommended_offer",
+              "displayName": "recommended_offer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "estimated_value",
+              "displayName": "estimated_value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "campaign",
+              "displayName": "campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assigned_owner",
+              "displayName": "assigned_owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_activity_at_utc",
+              "displayName": "last_activity_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action_at_utc",
+              "displayName": "next_action_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "followup_step",
+              "displayName": "followup_step",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "replied",
+              "displayName": "replied",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "reply_type",
+              "displayName": "reply_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "booking_status",
+              "displayName": "booking_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "proposal_value",
+              "displayName": "proposal_value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "deal_status",
+              "displayName": "deal_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "won_revenue",
+              "displayName": "won_revenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "consent_status",
+              "displayName": "consent_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "suppressed",
+              "displayName": "suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "consent",
+              "displayName": "consent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "form_response_id",
+              "displayName": "form_response_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "submission_timestamp",
+              "displayName": "submission_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "respondent_email",
+              "displayName": "respondent_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "intake_channel",
+              "displayName": "intake_channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_source",
+              "displayName": "utm_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_medium",
+              "displayName": "utm_medium",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_campaign",
+              "displayName": "utm_campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "utm_content",
+              "displayName": "utm_content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "referrer_url",
+              "displayName": "referrer_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "landing_page_url",
+              "displayName": "landing_page_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "form_version",
+              "displayName": "form_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "schema_version",
+              "displayName": "schema_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "prospect_timezone",
+              "displayName": "prospect_timezone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "received_at_utc",
+              "displayName": "received_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_valid",
+              "displayName": "email_valid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "free_email_domain",
+              "displayName": "free_email_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "flag_for_review",
+              "displayName": "flag_for_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "is_suppressed",
+              "displayName": "is_suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "existing_lead",
+              "displayName": "existing_lead",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "scoring_version",
+              "displayName": "scoring_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "lead_record",
+              "displayName": "lead_record",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "device_type",
+              "displayName": "device_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "browser",
+              "displayName": "browser",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_valid_syntax",
+              "displayName": "email_valid_syntax",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_is_free_domain",
+              "displayName": "email_is_free_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_needs_review",
+              "displayName": "email_needs_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "config_loom_sla_hours",
+              "displayName": "config_loom_sla_hours",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "config_followup_1_days",
+              "displayName": "config_followup_1_days",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "possible_duplicate_account",
+              "displayName": "possible_duplicate_account",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "related_lead_id",
+              "displayName": "related_lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "72b4dfc2-1f1f-4bd7-a897-cccf16844db6",
+      "name": "GS - Update Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4288,
+        2960
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Activity_Log",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "followup_sent",
+            "event_at_utc": "={{$json.last_activity_at_utc}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ step: $json.followup_step, message_id: $('CODE - Compute Update Fields').first().json.followup_message_id })}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "02d50b60-1367-4344-b5c0-32b6e0120379",
+      "name": "GS - Append Activity Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4496,
+        2960
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6",
+            "mode": "list",
+            "cachedResultName": "Lead Magnet",
+            "cachedResultUrl": "https://drive.google.com/drive/folders/1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6"
+          },
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1584,
+        2816
+      ],
+      "id": "7615095e-2a7d-471e-a902-899d53dca5b4",
+      "name": "GD - Search Folders",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1840,
+        2816
+      ],
+      "id": "2bdea29b-c957-4caa-86e9-d7a7e564b409",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('GD - Search File').last().json.id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "dcce7d56-5a52-4eb5-b711-20ea7442a719",
+      "name": "GS - Read Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2336,
+        2816
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $json.name }}",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.id }}",
+            "mode": "id"
+          },
+          "whatToSearch": "files"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2112,
+        2816
+      ],
+      "id": "bb8e326b-938f-442e-8971-87c0c873c509",
+      "name": "GD - Search File",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f6a7b8c9-d0e1-4f23-a456-7b8c9d0e1f2a",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2224,
+        2816
+      ],
+      "id": "a7b8c9d0-e1f2-4304-8567-8c9d0e1f2a3b",
+      "name": "IF - Client Sheet Found?",
+      "notes": "Guards against a client folder that has no matching spreadsheet inside it yet (e.g. WF-01's copy step still in flight, or a folder created without one) - skips straight back to the outer loop instead of every Sheets node below erroring on an empty documentId."
+    }
+  ],
+  "pinData": {
+    "TRG - Schedule Trigger": [
+      {
+        "json": {
+          "timestamp": "2026-08-18T11:31:35.472-04:00",
+          "Readable date": "August 18th 2026, 11:31:35 am",
+          "Readable time": "11:31:35 am",
+          "Day of week": "Tuesday",
+          "Year": "2026",
+          "Month": "August",
+          "Day of month": "18",
+          "Hour": "11",
+          "Minute": "31",
+          "Second": "35",
+          "Timezone": "America/New_York (UTC-04:00)"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "TRG - Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "GD - Search Folders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Parse Config": {
+      "main": [
+        [
+          {
+            "node": "GS - Load Email Templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Load Email Templates": {
+      "main": [
+        [
+          {
+            "node": "GS - Read All Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Read All Leads": {
+      "main": [
+        [
+          {
+            "node": "CODE - Filter Due and Eligible Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Filter Due and Eligible Leads": {
+      "main": [
+        [
+          {
+            "node": "LOOP - Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LOOP - Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "CODE - Build Follow-up Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Follow-up Message": {
+      "main": [
+        [
+          {
+            "node": "CODE - Build Raw Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Raw Email": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Send Follow-up Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Send Follow-up Email": {
+      "main": [
+        [
+          {
+            "node": "CODE - Compute Update Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Compute Update Fields": {
+      "main": [
+        [
+          {
+            "node": "GS - Update Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Update Lead": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log": {
+      "main": [
+        [
+          {
+            "node": "LOOP - Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Search Folders": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "GD - Search File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Read Config": {
+      "main": [
+        [
+          {
+            "node": "CODE - Parse Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Search File": {
+      "main": [
+        [
+          {
+            "node": "IF - Client Sheet Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Client Sheet Found?": {
+      "main": [
+        [
+          {
+            "node": "GS - Read Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "MVddORQapmz7SqgE",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "versionId": "569d99be-ed67-4c13-8ac4-17de63c674cc",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb86bb61b361730a28aa5591f3e6d0caab6b4b67906b3c70f45af9f3cba54790"
+  },
+  "nodeGroups": [],
+  "id": "h5XHb889MygRR8ro",
+  "tags": []
+}

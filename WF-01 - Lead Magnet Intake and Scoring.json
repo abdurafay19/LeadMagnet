@@ -1,0 +1,2416 @@
+{
+  "name": "WF-01 - Lead Magnet Intake and Scoring",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-magnet-intake",
+        "options": {}
+      },
+      "id": "df6464ba-397d-4243-a193-266bffeba325",
+      "name": "TRG - Form Submission",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1152,
+        2208
+      ],
+      "webhookId": "lead-magnet-intake"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Config",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "e36f4662-68c8-465c-9c22-e28b9b50f7d5",
+      "name": "GS - Read Config",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2096,
+        2096
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Reads the key/value/description rows from the Config tab (BOOKING_URL, OWNER_EMAIL, A_GRADE_MIN, B_GRADE_MIN, FOLLOWUP_1_DAYS, LOOM_SLA_HOURS, SYSTEM_VERSION, etc). This node has no outgoing connection on purpose - it is referenced by name via $('GS - Read Config') from CODE - Calculate Scores so thresholds are never hard-coded in more than one place (spec section 4.2)."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a2",
+              "name": "work_email",
+              "type": "string",
+              "value": "={{($json.body.work_email || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a3",
+              "name": "phone",
+              "type": "string",
+              "value": "={{$json.body.phone?.trim() || ''}}"
+            },
+            {
+              "id": "a4",
+              "name": "company_name",
+              "type": "string",
+              "value": "={{$json.body.company_name?.trim() || ''}}"
+            },
+            {
+              "id": "a5",
+              "name": "website",
+              "type": "string",
+              "value": "={{($json.body.website || '').trim().toLowerCase().replace(/^https?:\\/\\//,'').replace(/\\/$/,'')}}"
+            },
+            {
+              "id": "a6",
+              "name": "business_type",
+              "type": "string",
+              "value": "={{($json.body.business_type || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a7",
+              "name": "team_size",
+              "type": "string",
+              "value": "={{($json.body.team_size || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a8",
+              "name": "monthly_leads",
+              "type": "string",
+              "value": "={{($json.body.monthly_leads || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a9",
+              "name": "lead_sources",
+              "type": "array",
+              "value": "={{Array.isArray($json.body.lead_sources) ? $json.body.lead_sources : String($json.body.lead_sources || '').split(',').map(s=>s.trim()).filter(Boolean)}}"
+            },
+            {
+              "id": "a10",
+              "name": "lead_storage",
+              "type": "string",
+              "value": "={{($json.body.lead_storage || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a11",
+              "name": "all_leads_centralized",
+              "type": "string",
+              "value": "={{($json.body.all_leads_centralized || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a12",
+              "name": "response_time",
+              "type": "string",
+              "value": "={{($json.body.response_time || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a13",
+              "name": "assignment_method",
+              "type": "string",
+              "value": "={{($json.body.assignment_method || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a14",
+              "name": "followup_method",
+              "type": "string",
+              "value": "={{($json.body.followup_method || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a15",
+              "name": "missed_call_process",
+              "type": "string",
+              "value": "={{($json.body.missed_call_process || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a16",
+              "name": "management_visibility",
+              "type": "string",
+              "value": "={{($json.body.management_visibility || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a17",
+              "name": "main_problem",
+              "type": "string",
+              "value": "={{($json.body.main_problem || '').trim()}}"
+            },
+            {
+              "id": "a18",
+              "name": "improvement_timeline",
+              "type": "string",
+              "value": "={{($json.body.improvement_timeline || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a19",
+              "name": "personal_review_requested",
+              "type": "string",
+              "value": "={{($json.body.personal_review_requested || '').trim().toLowerCase()}}"
+            },
+            {
+              "id": "a20",
+              "name": "consent",
+              "type": "boolean",
+              "value": "={{ $json.body.consent === true || String($json.body.consent).toLowerCase() === 'true' }}"
+            },
+            {
+              "id": "a21",
+              "name": "utm_source",
+              "type": "string",
+              "value": "={{$json.body.utm_source || ''}}"
+            },
+            {
+              "id": "a22",
+              "name": "utm_medium",
+              "type": "string",
+              "value": "={{$json.body.utm_medium || ''}}"
+            },
+            {
+              "id": "a23",
+              "name": "utm_campaign",
+              "type": "string",
+              "value": "={{$json.body.utm_campaign || ''}}"
+            },
+            {
+              "id": "a23b",
+              "name": "utm_content",
+              "type": "string",
+              "value": "={{$json.body.utm_content || ''}}"
+            },
+            {
+              "id": "a24",
+              "name": "referrer_url",
+              "type": "string",
+              "value": "={{$json.body.referrer_url || ''}}"
+            },
+            {
+              "id": "a25",
+              "name": "landing_page_url",
+              "type": "string",
+              "value": "={{$json.body.landing_page_url || ''}}"
+            },
+            {
+              "id": "a26",
+              "name": "form_version",
+              "type": "string",
+              "value": "={{$json.body.form_version || '1.0'}}"
+            },
+            {
+              "id": "a27",
+              "name": "received_at_utc",
+              "type": "string",
+              "value": "={{new Date().toISOString()}}"
+            },
+            {
+              "id": "a28",
+              "name": "submission_timestamp",
+              "type": "string",
+              "value": "={{$json.body.timestamp || new Date().toISOString()}}"
+            },
+            {
+              "id": "a29",
+              "name": "device_type",
+              "type": "string",
+              "value": "={{$json.body.device_type || ''}}"
+            },
+            {
+              "id": "a30",
+              "name": "browser",
+              "type": "string",
+              "value": "={{$json.body.browser || ''}}"
+            },
+            {
+              "id": "2db8de41-4d6b-4f22-84d2-b2960cb51abc",
+              "name": "name",
+              "value": "={{ $json.body.name }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "591d54c5-76bc-49b9-a8f7-0a96b6a22a92",
+      "name": "SET - Normalize Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2288,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{$json.name}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{$json.work_email}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "c3",
+              "leftValue": "={{$json.company_name}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "c4",
+              "leftValue": "={{ $json.consent }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "29ea7e7b-c3e1-425e-b84f-94c2aa8690e3",
+      "name": "IF - Required Fields Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2496,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const email = $json.work_email || '';\nconst emailRe = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nconst freeDomains = ['gmail.com','yahoo.com','hotmail.com','outlook.com','aol.com','icloud.com'];\nconst domain = email.split('@')[1] || '';\nconst validSyntax = emailRe.test(email);\nconst isFreeDomain = freeDomains.includes(domain);\n\nreturn [{\n  json: {\n    ...$json,\n    email_valid: validSyntax,\n    free_email_domain: isFreeDomain,\n    flag_for_review: isFreeDomain\n  }\n}];"
+      },
+      "id": "6f6ee95e-d8f8-44bc-9202-5e37c2025ebb",
+      "name": "CODE - Validate Email/Domain",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2768,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "e1",
+              "leftValue": "={{$json.email_valid}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "80182585-5e24-4ae2-b4bb-128773d67ce0",
+      "name": "IF - Email Syntax Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3024,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Activity_Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_type": "invalid_email_submission",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({work_email: $json.work_email, company_name: $json.company_name})}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "b0417fb5-8c0f-4956-99ed-e180191d5f76",
+      "name": "GS - Append Activity Log (Invalid Email)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3024,
+        2448
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "T07: invalid email format must be marked invalid and logged, not scored as a normal lead."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Suppression_List"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "work_email",
+              "lookupValue": "={{$json.work_email}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9dbda63e-fac3-486a-ad74-f2a3ceb826eb",
+      "name": "GS - Lookup Suppression List",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3296,
+        2208
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Filters on work_email (matches the real Suppression_List schema: work_email, reason, added_at_utc, source_lead_id, notes). alwaysOutputData is required so a zero-match (normal, non-suppressed) result still emits one empty item instead of silently killing the branch."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "s1",
+              "leftValue": "={{$json.work_email}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0e4036f6-aa81-4e33-b8bc-25989795c53c",
+      "name": "IF - Is Suppressed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3552,
+        2208
+      ],
+      "notes": "True = a matching row came back from Suppression_List (spec 8.1 node 5: stop if unsubscribed, blocked or previous hard bounce)."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Activity_Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_type": "suppression_blocked",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({work_email: $('CODE - Validate Email/Domain').first().json.work_email})}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "320a6b4d-7ac5-43ec-b7d1-dc225181fbbe",
+      "name": "GS - Append Activity Log (Suppressed)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3552,
+        2448
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "work_email",
+              "lookupValue": "={{$('CODE - Validate Email/Domain').first().json.work_email}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "17ba8d5e-2c47-4de8-8988-fc36f369c601",
+      "name": "GS - Lookup Existing Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        3824,
+        2208
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Matches by normalized email. Filter reads the original validated email directly by node reference (not $json) because the previous node in this chain may have returned zero rows and $json would then be empty."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Leads"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "website",
+              "lookupValue": "={{$('CODE - Validate Email/Domain').first().json.website}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9e751e1a-8237-46ef-98e4-003295555780",
+      "name": "GS - Lookup Existing Lead by Domain",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4080,
+        2208
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Spec 8.1 node 6: match by email first, then company domain. Per T05 this must never blind-merge a different email at the same domain - CODE - Build Lead Record only uses this to set possible_duplicate_account for manual review."
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('CODE - Validate Email/Domain').first().json;\n// Some frontend selects post snake_case codes (e.g. business_type = 'real_estate_brokerage')\n// while other fields post the literal Section 5 label text (e.g. response_time = '<1 hour').\n// Stripping underscores (never hyphens - '16-50' and '5-15 min' rely on the hyphen) makes\n// matching resilient to either convention without needing a second lookup table.\nconst n = (v) => String(v ?? '').trim().toLowerCase().replace(/_/g, ' ');\nconst pick = (map, value, fallback = 0) => map[n(value)] ?? fallback;\n\n// Load Config tab (Key/Value rows) so thresholds are never hard-coded in more than one node.\nconst configRows = $('GS - Read Config').all();\nconst config = {};\nfor (const row of configRows) {\n  const key = row.json.Key ?? row.json.key;\n  const value = row.json.Value ?? row.json.value;\n  if (key) config[key] = value;\n}\n\n// Map keys below are normalized (trim+lowercase) versions of the EXACT option labels\n// from the Assessment Form Specification (spec section 5), not the illustrative\n// wording used in the section 7.5 example code, which does not match the real\n// form options and would silently zero out almost every category.\nconst system = {\n  centralization: pick({yes:15, partially:8, no:0, 'not sure':3}, input.all_leads_centralized),\n  storage: pick({crm:15, 'property software':13, sheets:7, email:3, 'different systems':0, 'not sure':2}, input.lead_storage),\n  response: pick({immediate:15, '5-15 min':13, '<1 hour':9, 'same day':5, '>1 day':0, 'depends on staff':3}, input.response_time),\n  assignment: pick({automatic:15, 'manager manually':8, 'agents select':5, 'email/group':3, 'no formal process':0}, input.assignment_method),\n  followup: pick({'fully automated':15, 'crm reminders':11, 'personal calendars':7, sheets:4, memory:1, 'no consistent process':0}, input.followup_method),\n  missedCall: pick({'auto sms':10, 'task created':8, 'crm log':6, 'manual check':3, 'no process':0, 'not sure':1}, input.missed_call_process),\n  visibility: pick({'live dashboard':15, partial:10, 'manual reports':5, no:0, 'not sure':2}, input.management_visibility)\n};\n\nconst sources = Array.isArray(input.lead_sources)\n  ? input.lead_sources\n  : String(input.lead_sources ?? '').split(',').map(s => s.trim()).filter(Boolean);\nconst sourceCount = sources.length;\n\nconst qualification = {\n  team: pick({'just me':2, '2-5':8, '6-15':14, '16-50':18, '50+':20}, input.team_size),\n  volume: pick({'<10':2, '10-30':8, '31-75':15, '76-200':21, '200+':25, 'not sure':5}, input.monthly_leads),\n  sources: sourceCount >= 4 ? 15 : sourceCount === 3 ? 11 : sourceCount === 2 ? 7 : sourceCount === 1 ? 3 : 0,\n  timeline: pick({immediately:20, '30 days':17, '90 days':12, 'later this year':6, researching:2}, input.improvement_timeline),\n  review: pick({yes:10, maybe:5, no:0}, input.personal_review_requested),\n  fit: pick({'property management':10, 'real estate brokerage':10, 'mortgage brokerage':10, 'real estate investment':10, 'real estate marketing agency':8, other:3}, input.business_type)\n};\n\nconst systemHealthScore = Object.values(system).reduce((a,b) => a+b, 0);\nconst qualificationScore = Object.values(qualification).reduce((a,b) => a+b, 0);\n\nconst aGradeMin = Number(config.A_GRADE_MIN) || 70;\nconst bGradeMin = Number(config.B_GRADE_MIN) || 45;\nconst grade = qualificationScore >= aGradeMin ? 'A' : qualificationScore >= bGradeMin ? 'B' : 'C';\n\nconst categoryLabels = {\n  centralization: 'Lead centralization', storage: 'Lead storage', response: 'Response speed',\n  assignment: 'Lead assignment', followup: 'Follow-up', missedCall: 'Missed calls', visibility: 'Management visibility'\n};\n\nconst weakest = Object.entries(system)\n  .sort((a,b) => a[1]-b[1])\n  .slice(0,3)\n  .map(([key,score]) => ({ category: categoryLabels[key], score }));\n\n// Spec 7.4 has a 4th row ('very low qualification' -> educational nurture, no custom\n// proposal yet) that is functionally the same population as a C-grade lead (spec 7.3:\n// automated educational result and light nurture only, no custom Loom/proposal), so it\n// is keyed off bGradeMin here rather than inventing a second undefined threshold.\nconst recommendedOffer = qualificationScore >= 75 && systemHealthScore <= 55\n  ? 'Complete Real Estate Operations System'\n  : qualificationScore >= 60 && systemHealthScore <= 70\n  ? 'Real Estate Lead Conversion System'\n  : qualificationScore < bGradeMin\n  ? 'Educational nurture - no custom proposal yet'\n  : 'Lead Follow-Up Foundation';\n\n// Indicative values straight from spec section 2.5 (Paid services behind the lead magnet).\nconst estimatedValueByOffer = {\n  'Complete Real Estate Operations System': '8000-15000+',\n  'Real Estate Lead Conversion System': '5000-8000',\n  'Lead Follow-Up Foundation': '2500-4000',\n  'Educational nurture - no custom proposal yet': ''\n};\n\nreturn [{ json: {\n  ...input,\n  system_health_score: systemHealthScore,\n  qualification_score: qualificationScore,\n  lead_grade: grade,\n  weakest_categories: weakest,\n  recommended_offer: recommendedOffer,\n  estimated_value: estimatedValueByOffer[recommendedOffer] || '',\n  scoring_version: config.SYSTEM_VERSION || '1.0',\n  config_loom_sla_hours: Number(config.LOOM_SLA_HOURS) || 24,\n  config_followup_1_days: Number(config.FOLLOWUP_1_DAYS) || 3\n}}];"
+      },
+      "id": "436583f7-d443-4e9d-bd44-944386bf4f12",
+      "name": "CODE - Calculate Scores",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4352,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function uuid() {\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {\n    const r = Math.random() * 16 | 0;\n    const v = c === 'x' ? r : (r & 0x3 | 0x8);\n    return v.toString(16);\n  });\n}\n\nconst searchEmail = $json.work_email;\nconst searchWebsite = $json.website;\nconst emailMatchRaw = $('GS - Lookup Existing Lead').first()?.json;\nconst emailMatch = (emailMatchRaw && emailMatchRaw.lead_id && emailMatchRaw.work_email === searchEmail) ? emailMatchRaw : null;\nconst domainMatchRaw = $('GS - Lookup Existing Lead by Domain').first()?.json;\nconst domainMatch = (domainMatchRaw && domainMatchRaw.lead_id && domainMatchRaw.website === searchWebsite) ? domainMatchRaw : null;\nconst isExisting = !!(emailMatch && emailMatch.lead_id);\nconst isDomainMatch = !!(domainMatch && domainMatch.lead_id && domainMatch.work_email !== $json.work_email);\n\nconst grade = $json.lead_grade;\nconst nextAction = grade === 'A'\n  ? 'Research + personalized Loom + same-day contact'\n  : grade === 'B'\n  ? 'Scheduled follow-up sequence'\n  : 'Light nurture';\nconst loomSlaHours = Number($json.config_loom_sla_hours) || 24;\nconst followup1Days = Number($json.config_followup_1_days) || 3;\nconst nextActionAtUtc = grade === 'A'\n  ? new Date(Date.now() + loomSlaHours * 3600 * 1000).toISOString()\n  : new Date(Date.now() + followup1Days * 24 * 3600 * 1000).toISOString();\n\nreturn [{\n  json: {\n    ...$json,\n    lead_id: isExisting ? emailMatch.lead_id : uuid(),\n    created_at_utc: isExisting ? emailMatch.created_at_utc : new Date().toISOString(),\n    updated_at_utc: new Date().toISOString(),\n    last_activity_at_utc: new Date().toISOString(),\n    status: isExisting ? (emailMatch.status || 'New submission') : 'New submission',\n    next_action: nextAction,\n    next_action_at_utc: nextActionAtUtc,\n    followup_step: isExisting ? (emailMatch.followup_step || 0) : 0,\n    replied: isExisting ? emailMatch.replied : false,\n    booking_status: isExisting ? (emailMatch.booking_status || 'Not booked') : 'Not booked',\n    deal_status: isExisting ? (emailMatch.deal_status || 'Open') : 'Open',\n    consent_status: 'Granted',\n    suppressed: false,\n    possible_duplicate_account: isDomainMatch,\n    related_lead_id: isDomainMatch ? domainMatch.lead_id : '',\n    source: $json.utm_source || $json.referrer_url || 'direct',\n    campaign: $json.utm_campaign || '',\n    lead_sources: Array.isArray($json.lead_sources) ? $json.lead_sources.join(', ') : ($json.lead_sources || ''),\n    weakest_categories: JSON.stringify($json.weakest_categories || [])\n  }\n}];"
+      },
+      "id": "578da3c0-2d77-4ff3-b3f4-0a1edc11a9f0",
+      "name": "CODE - Build Lead Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4624,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Leads",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at_utc",
+              "displayName": "created_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at_utc",
+              "displayName": "updated_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "work_email",
+              "displayName": "work_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company_name",
+              "displayName": "company_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "business_type",
+              "displayName": "business_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "team_size",
+              "displayName": "team_size",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "monthly_leads",
+              "displayName": "monthly_leads",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_sources",
+              "displayName": "lead_sources",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_storage",
+              "displayName": "lead_storage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "all_leads_centralized",
+              "displayName": "all_leads_centralized",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "response_time",
+              "displayName": "response_time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assignment_method",
+              "displayName": "assignment_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "followup_method",
+              "displayName": "followup_method",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "missed_call_process",
+              "displayName": "missed_call_process",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "management_visibility",
+              "displayName": "management_visibility",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "main_problem",
+              "displayName": "main_problem",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "improvement_timeline",
+              "displayName": "improvement_timeline",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "personal_review_requested",
+              "displayName": "personal_review_requested",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "system_health_score",
+              "displayName": "system_health_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "qualification_score",
+              "displayName": "qualification_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_grade",
+              "displayName": "lead_grade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "weakest_categories",
+              "displayName": "weakest_categories",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recommended_offer",
+              "displayName": "recommended_offer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "estimated_value",
+              "displayName": "estimated_value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "campaign",
+              "displayName": "campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assigned_owner",
+              "displayName": "assigned_owner",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "last_activity_at_utc",
+              "displayName": "last_activity_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action",
+              "displayName": "next_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "next_action_at_utc",
+              "displayName": "next_action_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "followup_step",
+              "displayName": "followup_step",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "replied",
+              "displayName": "replied",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reply_type",
+              "displayName": "reply_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "booking_status",
+              "displayName": "booking_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "proposal_value",
+              "displayName": "proposal_value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "deal_status",
+              "displayName": "deal_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "won_revenue",
+              "displayName": "won_revenue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "consent_status",
+              "displayName": "consent_status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "suppressed",
+              "displayName": "suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "consent",
+              "displayName": "consent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "form_response_id",
+              "displayName": "form_response_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submission_timestamp",
+              "displayName": "submission_timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "respondent_email",
+              "displayName": "respondent_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "intake_channel",
+              "displayName": "intake_channel",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_source",
+              "displayName": "utm_source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_medium",
+              "displayName": "utm_medium",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_campaign",
+              "displayName": "utm_campaign",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "utm_content",
+              "displayName": "utm_content",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "referrer_url",
+              "displayName": "referrer_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "landing_page_url",
+              "displayName": "landing_page_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "form_version",
+              "displayName": "form_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "schema_version",
+              "displayName": "schema_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "prospect_timezone",
+              "displayName": "prospect_timezone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "received_at_utc",
+              "displayName": "received_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_valid",
+              "displayName": "email_valid",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "free_email_domain",
+              "displayName": "free_email_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "flag_for_review",
+              "displayName": "flag_for_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "is_suppressed",
+              "displayName": "is_suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "existing_lead",
+              "displayName": "existing_lead",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "scoring_version",
+              "displayName": "scoring_version",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lead_record",
+              "displayName": "lead_record",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "device_type",
+              "displayName": "device_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "browser",
+              "displayName": "browser",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_valid_syntax",
+              "displayName": "email_valid_syntax",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_is_free_domain",
+              "displayName": "email_is_free_domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email_needs_review",
+              "displayName": "email_needs_review",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "config_loom_sla_hours",
+              "displayName": "config_loom_sla_hours",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "config_followup_1_days",
+              "displayName": "config_followup_1_days",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "possible_duplicate_account",
+              "displayName": "possible_duplicate_account",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "related_lead_id",
+              "displayName": "related_lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "f26913d8-22d9-4c82-b5b0-c05661c6abb1",
+      "name": "GS - Upsert Lead",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4880,
+        2208
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "Connect your Google Sheets credential."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Activity_Log"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{$json.lead_id}}",
+            "event_type": "assessment_submitted",
+            "event_at_utc": "={{new Date().toISOString()}}",
+            "workflow_execution_id": "={{$execution.id}}",
+            "details": "={{JSON.stringify({ grade: $json.lead_grade, qualification_score: $json.qualification_score, system_health_score: $json.system_health_score, recommended_offer: $json.recommended_offer, estimated_value: $json.estimated_value, possible_duplicate_account: $json.possible_duplicate_account, related_lead_id: $json.related_lead_id, utm_source: $json.utm_source, utm_medium: $json.utm_medium, utm_campaign: $json.utm_campaign, utm_content: $json.utm_content, referrer_url: $json.referrer_url, landing_page_url: $json.landing_page_url, form_version: $json.form_version, submission_timestamp: $json.submission_timestamp, device_type: $json.device_type, browser: $json.browser })}}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_type",
+              "displayName": "event_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event_at_utc",
+              "displayName": "event_at_utc",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow_execution_id",
+              "displayName": "workflow_execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "details",
+              "displayName": "details",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "7d92cf2d-a686-4e09-85a7-66fd0eac2c84",
+      "name": "GS - Append Activity Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        5136,
+        2208
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "jhDJDAFgHrbckJK6",
+          "name": "Google Sheets account 2"
+        }
+      },
+      "notes": "The real Leads tab has no columns for possible_duplicate_account/related_lead_id or the raw UTM/device/browser fields, so they are preserved here in details instead of being silently dropped by autoMapInputData."
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.details.parseJson().grade }}",
+                    "rightValue": "A",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "3f00e525-779f-41cd-888a-fd81ff0e8c62"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "A"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.details.parseJson().grade }}",
+                    "rightValue": "B",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "05edf0c5-e21c-426d-a48e-2144b9424df9"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "B"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.details.parseJson().grade }}",
+                    "rightValue": "C",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "2294737a-b88f-44b8-bdbd-dfd04ea6005e"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "C"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7179a963-1e6f-4dc0-92a9-3626f2123630",
+      "name": "SWT - Route by Lead Grade",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        5408,
+        2192
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Cg4mgbv9FFhM9FBt",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Cg4mgbv9FFhM9FBt",
+          "cachedResultName": "WF-02 - Result Email Delivery"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $json.lead_id }}",
+            "lead_grade": "={{ $json.details.parseJson().grade }}",
+            "sheet_id": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+            "type": "={{ $('TRG - Form Submission').item.json.body.type }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "lead_grade",
+              "displayName": "lead_grade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "sheet_id",
+              "displayName": "sheet_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "id": "cc401bb7-179c-4905-96d1-39bc09a9c141",
+      "name": "EXEC - Result Delivery (A)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5648,
+        2000
+      ],
+      "notes": "Point this at WF-02 Result Email Delivery. Same node type reused for B and C branches below."
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Cg4mgbv9FFhM9FBt",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Cg4mgbv9FFhM9FBt",
+          "cachedResultName": "WF-02 - Result Email Delivery"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_grade": "={{ $json.details.parseJson().grade }}",
+            "lead_id": "={{ $json.lead_id }}",
+            "sheet_id": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+            "type": "={{ $('TRG - Form Submission').item.json.body.type }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "lead_grade",
+              "displayName": "lead_grade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "sheet_id",
+              "displayName": "sheet_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "id": "e2125554-0fef-448f-8aea-c1b53c013eab",
+      "name": "EXEC - Result Delivery (B)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5760,
+        2208
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "Cg4mgbv9FFhM9FBt",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/Cg4mgbv9FFhM9FBt",
+          "cachedResultName": "WF-02 - Result Email Delivery"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_grade": "={{ $json.details.parseJson().grade }}",
+            "lead_id": "={{ $json.lead_id }}",
+            "sheet_id": "={{ $('SET - Sheet ID').last().json.sheet_id }}",
+            "type": "={{ $('TRG - Form Submission').item.json.body.type }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "lead_grade",
+              "displayName": "lead_grade",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "sheet_id",
+              "displayName": "sheet_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "type",
+              "displayName": "type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "id": "01bb6eb1-82e5-4925-b365-ff443f513a01",
+      "name": "EXEC - Result Delivery (C)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5760,
+        2416
+      ]
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "CPHsqzzwJxipLiE7",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/CPHsqzzwJxipLiE7",
+          "cachedResultName": "WF-03 - A-Level Lead Alert and Task"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "lead_id": "={{ $json.lead_id }}",
+            "sheet_id": "={{ $('SET - Sheet ID').last().json.sheet_id }}"
+          },
+          "matchingColumns": [
+            "lead_id"
+          ],
+          "schema": [
+            {
+              "id": "lead_id",
+              "displayName": "lead_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "sheet_id",
+              "displayName": "sheet_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "id": "b37e5e04-0510-4381-8d68-4500263b1d97",
+      "name": "EXEC - A Lead Alert",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        5872,
+        2000
+      ],
+      "notes": "Point this at WF-03 A-Level Lead Alert and Task. Only wired on the A branch."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c3c2e87d-426c-40f6-a1d6-5b4340ee0f40",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1664,
+        1984
+      ],
+      "id": "898e7173-cee3-4299-a445-b1092fef38eb",
+      "name": "IF - Client Folder Exists?"
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $('TRG - Form Submission').item.json.body.type }}",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "={{ $json.id }}",
+            "mode": "id"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1904,
+        1824
+      ],
+      "id": "83be5082-68d5-4b8a-bd2b-0036fdb265d8",
+      "name": "GD - Search Client Sheet",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "copy",
+        "fileId": {
+          "__rl": true,
+          "value": "1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M",
+          "mode": "list",
+          "cachedResultName": "LeadMagnet",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1P9gpsLp0PKTV8PN9kQ-0E-6qy_ZQStmnJbh7ehtiu6M/edit?usp=drivesdk"
+        },
+        "name": "={{ $('TRG - Form Submission').item.json.body.type }}",
+        "sameFolder": false,
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2096,
+        1904
+      ],
+      "id": "f928b12d-d29d-4978-82c1-a3ce9d87b16d",
+      "name": "GD - Copy Template Spreadsheet",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $('TRG - Form Submission').item.json.body.type }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6",
+          "mode": "list",
+          "cachedResultName": "Lead Magnet",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1904,
+        1984
+      ],
+      "id": "82652f81-50ad-4bad-8cd9-6679fa0a99f9",
+      "name": "GD - Create Client Folder",
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $json.body.type }}",
+        "returnAll": true,
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6",
+            "mode": "list",
+            "cachedResultName": "Lead Magnet",
+            "cachedResultUrl": "https://drive.google.com/drive/folders/1Fc_yqYssE0oIgs02uqU2FDI1SPYz7iq6"
+          }
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1456,
+        1984
+      ],
+      "id": "9868936b-6886-494f-8e01-f570ecdd20b7",
+      "name": "GD - Search Client Folder",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "JmiJiAvqM79p7WpZ",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "564af5a4-cbd3-442a-9214-ca1ac1a4a9fe",
+              "name": "sheet_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "6f7a8b9c-0d1e-4f23-a456-7b8c9d0e1f2a",
+              "name": "body",
+              "value": "={{ $('TRG - Form Submission').item.json.body }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2336,
+        1856
+      ],
+      "id": "c2a96504-57a7-4d16-b2e2-1a222e8d32c2",
+      "name": "SET - Sheet ID",
+      "alwaysOutputData": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "TRG - Form Submission": {
+      "main": [
+        [
+          {
+            "node": "GD - Search Client Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SET - Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "IF - Required Fields Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Required Fields Valid?": {
+      "main": [
+        [
+          {
+            "node": "CODE - Validate Email/Domain",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "CODE - Validate Email/Domain": {
+      "main": [
+        [
+          {
+            "node": "IF - Email Syntax Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Email Syntax Valid?": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Suppression List",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Append Activity Log (Invalid Email)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log (Invalid Email)": {
+      "main": [
+        []
+      ]
+    },
+    "GS - Lookup Suppression List": {
+      "main": [
+        [
+          {
+            "node": "IF - Is Suppressed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Is Suppressed?": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity Log (Suppressed)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GS - Lookup Existing Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log (Suppressed)": {
+      "main": [
+        []
+      ]
+    },
+    "GS - Lookup Existing Lead": {
+      "main": [
+        [
+          {
+            "node": "GS - Lookup Existing Lead by Domain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Lookup Existing Lead by Domain": {
+      "main": [
+        [
+          {
+            "node": "CODE - Calculate Scores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Calculate Scores": {
+      "main": [
+        [
+          {
+            "node": "CODE - Build Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CODE - Build Lead Record": {
+      "main": [
+        [
+          {
+            "node": "GS - Upsert Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Upsert Lead": {
+      "main": [
+        [
+          {
+            "node": "GS - Append Activity Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS - Append Activity Log": {
+      "main": [
+        [
+          {
+            "node": "SWT - Route by Lead Grade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SWT - Route by Lead Grade": {
+      "main": [
+        [
+          {
+            "node": "EXEC - Result Delivery (A)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "EXEC - Result Delivery (B)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "EXEC - Result Delivery (C)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXEC - Result Delivery (A)": {
+      "main": [
+        [
+          {
+            "node": "EXEC - A Lead Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "EXEC - A Lead Alert": {
+      "main": [
+        []
+      ]
+    },
+    "EXEC - Result Delivery (B)": {
+      "main": [
+        []
+      ]
+    },
+    "EXEC - Result Delivery (C)": {
+      "main": [
+        []
+      ]
+    },
+    "GS - Read Config": {
+      "main": [
+        []
+      ]
+    },
+    "IF - Client Folder Exists?": {
+      "main": [
+        [
+          {
+            "node": "GD - Search Client Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GD - Create Client Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Search Client Sheet": {
+      "main": [
+        [
+          {
+            "node": "SET - Sheet ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Copy Template Spreadsheet": {
+      "main": [
+        [
+          {
+            "node": "SET - Sheet ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Create Client Folder": {
+      "main": [
+        [
+          {
+            "node": "GD - Copy Template Spreadsheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SET - Sheet ID": {
+      "main": [
+        [
+          {
+            "node": "SET - Normalize Input",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "GS - Read Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GD - Search Client Folder": {
+      "main": [
+        [
+          {
+            "node": "IF - Client Folder Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "MVddORQapmz7SqgE",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "5f9c0c49-dce8-4b9c-af9d-d52b8b90b954",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "eb86bb61b361730a28aa5591f3e6d0caab6b4b67906b3c70f45af9f3cba54790"
+  },
+  "nodeGroups": [],
+  "id": "EpyvTvWBaSJXhAvO",
+  "tags": []
+}
